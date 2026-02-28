@@ -1,0 +1,11 @@
+.body {
+    min-height: 100vh;
+    background-color: #8684aa;
+
+}
+
+.hero-section {
+    background: linear-gradient(135deg, #151248, #080725);
+    background-size: cover;
+    background-position: center;
+}
