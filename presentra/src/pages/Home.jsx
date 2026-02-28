@@ -17,161 +17,119 @@ function Home() {
     };
 
     return (
-        <div style={{ fontFamily: "Arial, sans-serif", color: "#1e293b" }}>
+        <div className="text-dark" style={{ fontFamily: "Arial, sans-serif" }}>
+
             {/* HERO SECTION */}
-            <section
+            <section className="py-5 text-center text-white"
                 style={{
-                    padding: "80px 20px",
-                    textAlign: "center",
                     background: "linear-gradient(135deg, #6C63FF, #4F46E5)",
-                    color: "white",
                 }}
             >
-                <h1 style={{ fontSize: "48px", marginBottom: "20px" }}>
-                    🚀 Presentra
-                </h1>
-                <h2 style={{ fontWeight: "400", marginBottom: "20px" }}>
-                    Hack Your Fear. Own The Stage.
-                </h2>
-                <p style={{ maxWidth: "700px", margin: "0 auto", fontSize: "18px" }}>
-                    Presentra is an AI-powered public speaking training platform designed
-                    to help students improve confidence, clarity, and pacing through
-                    real-time speech analysis and smart performance feedback.
-                </p>
+                <div className="container">
+                    <h1 className="display-4 fw-bold mb-3">🚀 Presentra</h1>
+                    <h2 className="fw-light mb-3">
+                        Hack Your Fear. Own The Stage.
+                    </h2>
+                    <p className="lead mx-auto" style={{ maxWidth: "700px" }}>
+                        Presentra is an AI-powered public speaking training platform designed
+                        to help students improve confidence, clarity, and pacing through
+                        real-time speech analysis and smart performance feedback.
+                    </p>
 
-                <button
-                    onClick={() =>
-                        document
-                            .getElementById("start-section")
-                            .scrollIntoView({ behavior: "smooth" })
-                    }
-                    style={{
-                        marginTop: "30px",
-                        padding: "12px 24px",
-                        fontSize: "16px",
-                        borderRadius: "6px",
-                        border: "none",
-                        cursor: "pointer",
-                        background: "white",
-                        color: "#4F46E5",
-                        fontWeight: "bold",
-                    }}
-                >
-                    Start Practicing
-                </button>
+                    <button
+                        onClick={() =>
+                            document
+                                .getElementById("start-section")
+                                .scrollIntoView({ behavior: "smooth" })
+                        }
+                        className="btn btn-light btn-lg mt-4 fw-bold text-primary"
+                    >
+                        Start Practicing
+                    </button>
+                </div>
             </section>
 
             {/* FEATURES SECTION */}
-            <section
-                style={{
-                    padding: "60px 20px",
-                    textAlign: "center",
-                    background: "#f8fafc",
-                }}
-            >
-                <h2 style={{ marginBottom: "40px" }}>Why Presentra?</h2>
+            <section className="py-5 bg-light text-center">
+                <div className="container">
+                    <h2 className="mb-5">Why Presentra?</h2>
 
-                <div
-                    style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        gap: "40px",
-                        flexWrap: "wrap",
-                    }}
-                >
-                    <div style={{ maxWidth: "250px" }}>
-                        <h3>🎤 Live Speech Detection</h3>
-                        <p>
-                            Real-time voice recognition tracks your speech and provides
-                            accurate transcript analysis.
-                        </p>
-                    </div>
+                    <div className="row g-4">
+                        <div className="col-md-4">
+                            <div className="p-4 shadow-sm bg-white rounded">
+                                <h4>🎤 Live Speech Detection</h4>
+                                <p>
+                                    Real-time voice recognition tracks your speech and provides
+                                    accurate transcript analysis.
+                                </p>
+                            </div>
+                        </div>
 
-                    <div style={{ maxWidth: "250px" }}>
-                        <h3>📊 Performance Analytics</h3>
-                        <p>
-                            Get detailed insights on pacing, filler words, and overall
-                            speaking confidence.
-                        </p>
-                    </div>
+                        <div className="col-md-4">
+                            <div className="p-4 shadow-sm bg-white rounded">
+                                <h4>📊 Performance Analytics</h4>
+                                <p>
+                                    Get detailed insights on pacing, filler words, and overall
+                                    speaking confidence.
+                                </p>
+                            </div>
+                        </div>
 
-                    <div style={{ maxWidth: "250px" }}>
-                        <h3>🧠 Smart Feedback</h3>
-                        <p>
-                            Receive personalized improvement tips to level up your
-                            presentation skills.
-                        </p>
+                        <div className="col-md-4">
+                            <div className="p-4 shadow-sm bg-white rounded">
+                                <h4>🧠 Smart Feedback</h4>
+                                <p>
+                                    Receive personalized improvement tips to level up your
+                                    presentation skills.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
 
             {/* SCRIPT INPUT SECTION */}
-            <section
-                id="start-section"
-                style={{
-                    padding: "60px 20px",
-                    textAlign: "center",
-                }}
-            >
-                <h2>Start Your Practice Session</h2>
-                <p style={{ marginBottom: "20px" }}>
-                    Paste your speech script below and begin your training session.
-                </p>
+            <section id="start-section" className="py-5 text-center">
+                <div className="container">
+                    <h2>Start Your Practice Session</h2>
+                    <p className="mb-4">
+                        Paste your speech script below and begin your training session.
+                    </p>
 
-                <textarea
-                    rows="10"
-                    style={{
-                        width: "80%",
-                        maxWidth: "700px",
-                        padding: "15px",
-                        fontSize: "16px",
-                        borderRadius: "8px",
-                        border: "1px solid #ccc",
-                        resize: "none",
-                    }}
-                    placeholder="Paste your speech here..."
-                    value={script}
-                    onChange={(e) => setScript(e.target.value)}
-                />
+                    <div className="row justify-content-center">
+                        <div className="col-md-8">
+                            <textarea
+                                rows="8"
+                                className="form-control mb-3"
+                                placeholder="Paste your speech here..."
+                                value={script}
+                                onChange={(e) => setScript(e.target.value)}
+                            />
 
-                <br />
-
-                <button
-                    onClick={startSession}
-                    style={{
-                        marginTop: "20px",
-                        padding: "12px 28px",
-                        fontSize: "16px",
-                        borderRadius: "6px",
-                        border: "none",
-                        cursor: "pointer",
-                        background: "#6C63FF",
-                        color: "white",
-                        fontWeight: "bold",
-                    }}
-                >
-                    Start Session
-                </button>
+                            <button
+                                onClick={startSession}
+                                className="btn btn-primary btn-lg fw-bold"
+                            >
+                                Start Session
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             {/* FOOTER */}
-            <footer
-                style={{
-                    padding: "30px 20px",
-                    textAlign: "center",
-                    background: "#1e293b",
-                    color: "white",
-                    marginTop: "40px",
-                }}
-            >
-                <h3 style={{ marginBottom: "10px" }}>Presentra</h3>
-                <p style={{ fontSize: "14px", marginBottom: "10px" }}>
-                    AI-powered public speaking training for the next generation.
-                </p>
-                <p style={{ fontSize: "12px", opacity: "0.8" }}>
-                    © {new Date().getFullYear()} Presentra. All rights reserved.
-                </p>
+            <footer className="bg-dark text-white text-center py-4 mt-5">
+                <div className="container">
+                    <h5 className="mb-2">Presentra</h5>
+                    <p className="mb-1 small">
+                        AI-powered public speaking training for the next generation.
+                    </p>
+                    <p className="small opacity-75">
+                        © {new Date().getFullYear()} Presentra. All rights reserved.
+                    </p>
+                </div>
             </footer>
+
         </div>
     );
 }
