@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import "../styles/Home.css";
 
 function Home() {
     const navigate = useNavigate();
@@ -17,16 +18,12 @@ function Home() {
     };
 
     return (
-        <div className="text-dark" style={{ fontFamily: "Arial, sans-serif" }}>
+        <div className="text-dark body" style={{ fontFamily: "Arial, sans-serif" }}>
 
             {/* HERO SECTION */}
-            <section className="py-5 text-center text-white"
-                style={{
-                    background: "linear-gradient(135deg, #6C63FF, #4F46E5)",
-                }}
-            >
+            <section className="py-5 text-center text-white hero-section">
                 <div className="container">
-                    <h1 className="display-4 fw-bold mb-3">🚀 Presentra</h1>
+                    <h1 className="display-4 fw-bold mb-3">Presentra</h1>
                     <h2 className="fw-light mb-3">
                         Hack Your Fear. Own The Stage.
                     </h2>
@@ -42,7 +39,7 @@ function Home() {
                                 .getElementById("start-section")
                                 .scrollIntoView({ behavior: "smooth" })
                         }
-                        className="btn btn-light btn-lg mt-4 fw-bold text-primary"
+                        className="btn btn-light btn-lg mt-4 fw-bold text-dark"
                     >
                         Start Practicing
                     </button>
@@ -50,7 +47,7 @@ function Home() {
             </section>
 
             {/* FEATURES SECTION */}
-            <section className="py-5 bg-light text-center">
+            <section className="py-5 text-center">
                 <div className="container">
                     <h2 className="mb-5">Why Presentra?</h2>
 
