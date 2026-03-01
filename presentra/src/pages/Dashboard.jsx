@@ -29,8 +29,8 @@ function Dashboard() {
                 fontFamily: "Arial"
             }}
         >
-            <h1 style={{ textAlign: "center", color: "#6C63FF" }}>
-                📊 Session Analytics
+            <h1 style={{ textAlign: "center", color: "#86858e" }}>
+                Session Analytics
             </h1>
 
             {/* OVERALL SCORE */}
@@ -45,7 +45,7 @@ function Dashboard() {
             >
                 <h2>Overall Score</h2>
 
-                <h1 style={{ fontSize: "60px", color: "#22c55e" }}>
+                <h1 style={{ fontSize: "60px", color: "#ffffff" }}>
                     {overall?.overallScore}
                 </h1>
 
@@ -65,7 +65,7 @@ function Dashboard() {
 
             {/* FLUENCY */}
             <div style={{ marginTop: "40px" }}>
-                <h2>🧠 Fluency Analysis</h2>
+                <h2>Fluency Analysis</h2>
 
                 <div style={cardStyle}>
                     <p>Filler Words Used: {fluency?.fillerCount}</p>
@@ -89,7 +89,7 @@ function Dashboard() {
 
             {/* PACING */}
             <div style={{ marginTop: "40px" }}>
-                <h2>⚡ Pacing Analysis</h2>
+                <h2>Pacing Analysis</h2>
 
                 <div style={cardStyle}>
                     <p>Speaking Speed: {pacing?.wpm} WPM</p>
@@ -100,7 +100,7 @@ function Dashboard() {
 
             {/* FEEDBACK */}
             <div style={{ marginTop: "40px" }}>
-                <h2>💡 Improvement Feedback</h2>
+                <h2>Improvement Feedback</h2>
 
                 <div style={cardStyle}>
                     {feedback?.map((item, index) => (
