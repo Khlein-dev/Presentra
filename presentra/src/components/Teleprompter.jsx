@@ -17,7 +17,7 @@ function Teleprompter({ onStart }) {
 
     return (
         <div style={{ marginBottom: "40px" }}>
-            <h2>📝 Teleprompter Setup</h2>
+            <h2>Teleprompter Setup</h2>
 
             <textarea
                 rows="6"
