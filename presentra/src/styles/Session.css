@@ -1,0 +1,17 @@
+.body {
+    min-height: 100vh;
+    background-color: #01010b;
+
+
+}
+
+.teleprompter-controls .card {
+    background-color: #1a1a2e;
+    border: none;
+}
+
+.form-select {
+    background-color: #1a1a2e;
+    color: #fff;
+    border: none;
+}
