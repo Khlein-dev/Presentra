@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/Home.css";
+import heroImage from "../assets/hero-section.jpg";
 
 function Home() {
     const navigate = useNavigate();
@@ -21,8 +22,8 @@ function Home() {
         <div className="text-dark body" style={{ fontFamily: "Arial, sans-serif" }}>
 
             {/* HERO SECTION */}
-            <section className="py-5 text-center text-white hero-section">
-                <div className="container">
+            <section className="py-5 text-center text-white hero-section"  style={{ backgroundImage: `url(${heroImage})` }}>
+                <div className="container" style={{ position: "relative", zIndex: 2 }}>
                     <h1 className="display-4 fw-bold mb-3">Presentra</h1>
                     <h2 className="fw-light mb-3">
                         Hack Your Fear. Own The Stage.
@@ -49,12 +50,12 @@ function Home() {
             {/* FEATURES SECTION */}
             <section className="py-5 text-center">
                 <div className="container">
-                    <h2 className="mb-5">Why Presentra?</h2>
+                    <h2 className="mb-5 text-white">Why Presentra?</h2>
 
                     <div className="row g-4">
                         <div className="col-md-4">
                             <div className="p-4 shadow-sm bg-white rounded">
-                                <h4>🎤 Live Speech Detection</h4>
+                                <h4>Live Speech Detection</h4>
                                 <p>
                                     Real-time voice recognition tracks your speech and provides
                                     accurate transcript analysis.
@@ -64,7 +65,7 @@ function Home() {
 
                         <div className="col-md-4">
                             <div className="p-4 shadow-sm bg-white rounded">
-                                <h4>📊 Performance Analytics</h4>
+                                <h4>Performance Analytics</h4>
                                 <p>
                                     Get detailed insights on pacing, filler words, and overall
                                     speaking confidence.
@@ -74,7 +75,7 @@ function Home() {
 
                         <div className="col-md-4">
                             <div className="p-4 shadow-sm bg-white rounded">
-                                <h4>🧠 Smart Feedback</h4>
+                                <h4>Smart Feedback</h4>
                                 <p>
                                     Receive personalized improvement tips to level up your
                                     presentation skills.
@@ -88,8 +89,8 @@ function Home() {
             {/* SCRIPT INPUT SECTION */}
             <section id="start-section" className="py-5 text-center">
                 <div className="container">
-                    <h2>Start Your Practice Session</h2>
-                    <p className="mb-4">
+                    <h2  className="text-secondary">Start Your Practice Session</h2>
+                    <p className="mb-4 text-secondary">
                         Paste your speech script below and begin your training session.
                     </p>
 
@@ -97,15 +98,15 @@ function Home() {
                         <div className="col-md-8">
                             <textarea
                                 rows="8"
-                                className="form-control mb-3"
+                                className="form-control mb-3 bg-secondary text-white"
                                 placeholder="Paste your speech here..."
                                 value={script}
-                                onChange={(e) => setScript(e.target.value)}
+                                onChange={(e) => setScript(e.target.value)} 
                             />
 
                             <button
                                 onClick={startSession}
-                                className="btn btn-primary btn-lg fw-bold"
+                                className="btn btn-dark btn-lg fw-bold"
                             >
                                 Start Session
                             </button>
@@ -113,20 +114,6 @@ function Home() {
                     </div>
                 </div>
             </section>
-
-            {/* FOOTER */}
-            <footer className="bg-dark text-white text-center py-4 mt-5">
-                <div className="container">
-                    <h5 className="mb-2">Presentra</h5>
-                    <p className="mb-1 small">
-                        AI-powered public speaking training for the next generation.
-                    </p>
-                    <p className="small opacity-75">
-                        © {new Date().getFullYear()} Presentra. All rights reserved.
-                    </p>
-                </div>
-            </footer>
-
         </div>
     );
 }
