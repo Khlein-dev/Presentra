@@ -466,6 +466,10 @@ function Session() {
         setIsRunning(false);
 
         const results = analyzeSpeech();
+        
+        // Add averageWPM to the results
+        results.summary.averageWPM = averageWPM;
+        
         navigate("/dashboard", { state: results });
     };
 

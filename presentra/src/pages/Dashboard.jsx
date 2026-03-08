@@ -59,7 +59,7 @@ function Dashboard() {
                 <div style={cardStyle}>
                     <p>Duration: {summary?.durationFormatted}</p>
                     <p>Total Words: {summary?.totalWords}</p>
-                    <p>Words Per Minute: {summary?.wpm} WPM</p>
+                    <p>Average WPM: {summary?.averageWPM || summary?.wpm} WPM</p>
                 </div>
             </div>
 
