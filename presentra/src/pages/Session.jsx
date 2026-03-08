@@ -1,5 +1,4 @@
-
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Holistic } from "@mediapipe/holistic";
 import * as cam from "@mediapipe/camera_utils";
@@ -14,6 +13,42 @@ const HandTracker = () => {
     const [error, setError] = useState(null);
     const holisticRef = useRef(null);
     const cameraRef = useRef(null);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            console.log("Cleaning up camera and holistic...");
+            
+            // Stop camera
+            if (cameraRef.current) {
+                try {
+                    cameraRef.current.stop?.();
+                    console.log("Camera stopped");
+                } catch (err) {
+                    console.error("Error stopping camera:", err);
+                }
+            }
+
+            // Close holistic
+            if (holisticRef.current) {
+                try {
+                    holisticRef.current.close?.();
+                    console.log("Holistic closed");
+                } catch (err) {
+                    console.error("Error closing holistic:", err);
+                }
+            }
+
+            // Stop webcam tracks
+            if (webcamRef.current?.video?.srcObject) {
+                const tracks = webcamRef.current.video.srcObject.getTracks();
+                tracks.forEach(track => {
+                    track.stop();
+                    console.log("Webcam track stopped");
+                });
+            }
+        };
+    }, []);
 
     const onUserMedia = async () => {
         try {
