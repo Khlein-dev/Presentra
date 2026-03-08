@@ -303,12 +303,14 @@ function Session() {
     
     // LIVE SPEECH ANALYSIS STATE
     const [liveWPM, setLiveWPM] = useState(0);
+    const [averageWPM, setAverageWPM] = useState(0);
     const [liveFeedback, setLiveFeedback] = useState("");
     const [wordCount, setWordCount] = useState(0);
     
-    // Refs for live analysis
-    const wordsSpokenRef = useRef([]);
+    // Refs for live analysis - rolling window approach
+    const wordsSpokenRef = useRef([]); // Store timestamped words for rolling window
     const lastAnalysisTimeRef = useRef(null);
+    const lastWordCountRef = useRef(0);
 
     const recognitionRef = useRef(null);
     const scrollRef = useRef(null);
@@ -333,6 +335,7 @@ function Session() {
         
         // Reset live analysis state
         setLiveWPM(0);
+        setAverageWPM(0);
         setLiveFeedback("");
         setWordCount(0);
         wordsSpokenRef.current = [];
@@ -374,23 +377,59 @@ function Session() {
             }
             setTranscript(text);
             
-            // ===== LIVE SPEECH ANALYSIS =====
+            // ===== LIVE SPEECH ANALYSIS (Rolling Window) =====
             const currentTranscript = text.trim();
             const wordsArray = currentTranscript.split(/\s+/).filter(Boolean);
             const currentWordCount = wordsArray.length;
             
-            // Get elapsed time in minutes
-            const elapsedMs = Date.now() - lastAnalysisTimeRef.current;
-            const elapsedMinutes = elapsedMs / 60000;
+            // Get current time
+            const now = Date.now();
             
-            // Calculate live WPM (only if we have words and at least 1 second has passed)
-            if (currentWordCount > 0 && elapsedMinutes >= 0.016) { // at least 1 second
-                const calculatedWPM = Math.round(currentWordCount / elapsedMinutes);
+            // Add new words with timestamp to rolling window
+            const newWords = wordsArray.slice(lastWordCountRef.current);
+            newWords.forEach(word => {
+                wordsSpokenRef.current.push({ word, timestamp: now });
+            });
+            lastWordCountRef.current = currentWordCount;
+            
+            // Keep only words from the last 10 seconds (rolling window)
+            const WINDOW_SIZE_MS = 10000; // 10 seconds
+            const windowStartTime = now - WINDOW_SIZE_MS;
+            
+            // Filter to keep only recent words within the window
+            const recentWords = wordsSpokenRef.current.filter(w => w.timestamp >= windowStartTime);
+            wordsSpokenRef.current = recentWords;
+            
+            const recentWordCount = recentWords.length;
+            const windowDurationSeconds = 10; // Fixed 10-second window
+            
+            // Calculate WPM based on rolling window
+            if (recentWordCount > 0) {
+                // Calculate actual window duration if less than 10 seconds
+                let actualDuration = windowDurationSeconds;
+                if (recentWords.length > 0) {
+                    const oldestTimestamp = recentWords[0].timestamp;
+                    const elapsed = (now - oldestTimestamp) / 1000;
+                    if (elapsed < windowDurationSeconds) {
+                        actualDuration = elapsed;
+                    }
+                }
+                
+                // Calculate WPM: (words in window / duration in minutes)
+                const calculatedWPM = Math.round((recentWordCount / actualDuration) * 60);
                 setLiveWPM(calculatedWPM);
                 setWordCount(currentWordCount);
                 
+                // Calculate average WPM (total words / total time since session start)
+                const sessionElapsedMs = now - lastAnalysisTimeRef.current;
+                const sessionElapsedMinutes = sessionElapsedMs / 60000;
+                const avgWPM = currentWordCount > 0 
+                    ? Math.round(currentWordCount / sessionElapsedMinutes)
+                    : 0;
+                setAverageWPM(avgWPM);
+                
                 // Determine feedback based on WPM
-                const IDEAL_MIN_WPM = 120;
+                const IDEAL_MIN_WPM = 90;
                 const IDEAL_MAX_WPM = 160;
                 
                 if (calculatedWPM < IDEAL_MIN_WPM) {
@@ -673,7 +712,7 @@ function Session() {
                                 {/* WPM Display */}
                                 <div className="col-4">
                                     <div className="bg-dark rounded p-3">
-                                        <div className="text-muted small">Words Per Minute</div>
+                                        <div className="text-muted small text-white">Current WPM</div>
                                         <div className="fs-2 fw-bold text-white">{liveWPM}</div>
                                     </div>
                                 </div>
@@ -681,7 +720,7 @@ function Session() {
                                 {/* Word Count Display */}
                                 <div className="col-4">
                                     <div className="bg-dark rounded p-3">
-                                        <div className="text-muted small">Words Spoken</div>
+                                        <div className="text-muted small text-white">Words Spoken</div>
                                         <div className="fs-2 fw-bold text-white">{wordCount}</div>
                                     </div>
                                 </div>
@@ -705,7 +744,7 @@ function Session() {
                             
                             {/* Ideal Range Indicator */}
                             <div className="mt-3 text-muted small">
-                                Ideal speaking range: 120-160 WPM
+                                Ideal speaking range: 90-160 WPM | Based on last 10 seconds
                             </div>
                         </div>
                     </div>
