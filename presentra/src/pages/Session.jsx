@@ -1,6 +1,254 @@
+import React, { useState, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useState, useRef } from "react";
+import { Holistic } from "@mediapipe/holistic";
+import * as cam from "@mediapipe/camera_utils";
+import { drawConnectors, drawLandmarks } from "@mediapipe/drawing_utils";
+import Webcam from "react-webcam";
 import "../styles/Session.css";
+
+// --- HOLISTIC TRACKER COMPONENT (Hands + Body + Face) ---
+const HandTracker = () => {
+    const webcamRef = useRef(null);
+    const canvasRef = useRef(null);
+    const [error, setError] = useState(null);
+    const holisticRef = useRef(null);
+    const cameraRef = useRef(null);
+
+    const onUserMedia = async () => {
+        try {
+            console.log("Webcam ready, initializing MediaPipe Holistic...");
+            
+            if (holisticRef.current) {
+                console.log("MediaPipe already initialized");
+                return;
+            }
+
+            // Wait for video to have actual dimensions
+            await new Promise(resolve => {
+                const checkDimensions = () => {
+                    if (webcamRef.current?.video?.videoWidth > 0) {
+                        console.log("Video dimensions ready");
+                        resolve();
+                    } else {
+                        setTimeout(checkDimensions, 100);
+                    }
+                };
+                checkDimensions();
+            });
+
+            // Initialize Holistic (combines hands, pose, and face)
+            const holistic = new Holistic({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
+            });
+
+            holistic.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5,
+            });
+
+            // Setup Holistic results with drawing
+            holistic.onResults((results) => {
+                if (!webcamRef.current?.video || !canvasRef.current) return;
+                
+                const videoWidth = webcamRef.current.video.videoWidth;
+                const videoHeight = webcamRef.current.video.videoHeight;
+                
+                canvasRef.current.width = videoWidth;
+                canvasRef.current.height = videoHeight;
+
+                const canvasCtx = canvasRef.current.getContext("2d");
+                if (!canvasCtx) return;
+
+                canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
+                
+                // Draw video frame
+                if (results.image) {
+                    canvasCtx.drawImage(results.image, 0, 0, videoWidth, videoHeight);
+                }
+
+                // Helper function to draw connections manually
+                const drawManualConnections = (landmarks, connections, color, lineWidth) => {
+                    if (!landmarks || !connections) return;
+                    
+                    canvasCtx.strokeStyle = color;
+                    canvasCtx.lineWidth = lineWidth;
+                    canvasCtx.lineCap = 'round';
+                    canvasCtx.lineJoin = 'round';
+
+                    for (const connection of connections) {
+                        const start = landmarks[connection.start];
+                        const end = landmarks[connection.end];
+
+                        if (start && end) {
+                            canvasCtx.beginPath();
+                            canvasCtx.moveTo(start.x * videoWidth, start.y * videoHeight);
+                            canvasCtx.lineTo(end.x * videoWidth, end.y * videoHeight);
+                            canvasCtx.stroke();
+                        }
+                    }
+                };
+
+                // Helper function to draw landmarks
+                const drawManualLandmarks = (landmarks, color, radius) => {
+                    if (!landmarks) return;
+                    
+                    canvasCtx.fillStyle = color;
+
+                    for (const landmark of landmarks) {
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(landmark.x * videoWidth, landmark.y * videoHeight, radius, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                    }
+                };
+
+                // Connection definitions for pose (MediaPipe Holistic Pose landmarks)
+                const POSE_CONNECTIONS = [
+                    // Head
+                    { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 7 },
+                    { start: 4, end: 5 }, { start: 5, end: 6 }, { start: 6, end: 8 },
+                    // Torso
+                    { start: 9, end: 10 },
+                    // Right arm
+                    { start: 11, end: 13 }, { start: 13, end: 15 }, { start: 15, end: 17 }, { start: 17, end: 19 },
+                    { start: 15, end: 21 },
+                    // Left arm
+                    { start: 12, end: 14 }, { start: 14, end: 16 }, { start: 16, end: 18 }, { start: 18, end: 20 },
+                    { start: 16, end: 22 },
+                    // Right leg
+                    { start: 11, end: 23 }, { start: 23, end: 25 }, { start: 25, end: 27 }, { start: 27, end: 29 },
+                    { start: 29, end: 31 },
+                    // Left leg
+                    { start: 12, end: 24 }, { start: 24, end: 26 }, { start: 26, end: 28 }, { start: 28, end: 30 },
+                    { start: 30, end: 32 }
+                ];
+
+                // Hand connections (simplified)
+                const HAND_CONNECTIONS = [
+                    { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 4 },
+                    { start: 0, end: 5 }, { start: 5, end: 6 }, { start: 6, end: 7 }, { start: 7, end: 8 },
+                    { start: 0, end: 9 }, { start: 9, end: 10 }, { start: 10, end: 11 }, { start: 11, end: 12 },
+                    { start: 0, end: 13 }, { start: 13, end: 14 }, { start: 14, end: 15 }, { start: 15, end: 16 },
+                    { start: 0, end: 17 }, { start: 17, end: 18 }, { start: 18, end: 19 }, { start: 19, end: 20 }
+                ];
+
+                // Draw Pose (body)
+                if (results.poseLandmarks) {
+                    drawManualConnections(results.poseLandmarks, POSE_CONNECTIONS, "#00FF00", 3);
+                    drawManualLandmarks(results.poseLandmarks, "#FF0000", 4);
+                }
+
+                // Draw Left Hand
+                if (results.leftHandLandmarks) {
+                    drawManualConnections(results.leftHandLandmarks, HAND_CONNECTIONS, "#00FF00", 2);
+                    drawManualLandmarks(results.leftHandLandmarks, "#FF0000", 3);
+                }
+
+                // Draw Right Hand
+                if (results.rightHandLandmarks) {
+                    drawManualConnections(results.rightHandLandmarks, HAND_CONNECTIONS, "#00FF00", 2);
+                    drawManualLandmarks(results.rightHandLandmarks, "#FF0000", 3);
+                }
+
+                // Draw Face
+                if (results.faceLandmarks) {
+                    drawManualLandmarks(results.faceLandmarks, "#FF0000", 2);
+                    // Draw some basic face connections for lips and eyes
+                    const faceLandmarks = results.faceLandmarks;
+                    canvasCtx.strokeStyle = "#00FF00";
+                    canvasCtx.lineWidth = 1;
+                    
+                    // Draw mouth
+                    const mouthStart = 61;
+                    const mouthEnd = 291;
+                    if (faceLandmarks[mouthStart] && faceLandmarks[mouthEnd]) {
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(faceLandmarks[mouthStart].x * videoWidth, faceLandmarks[mouthStart].y * videoHeight);
+                        canvasCtx.lineTo(faceLandmarks[mouthEnd].x * videoWidth, faceLandmarks[mouthEnd].y * videoHeight);
+                        canvasCtx.stroke();
+                    }
+                }
+            });
+
+            holisticRef.current = holistic;
+
+            // Now start the camera
+            const camera = new cam.Camera(webcamRef.current.video, {
+                onFrame: async () => {
+                    if (holisticRef.current && webcamRef.current?.video) {
+                        await holisticRef.current.send({ image: webcamRef.current.video });
+                    }
+                },
+                width: 640,
+                height: 480,
+            });
+
+            cameraRef.current = camera;
+            camera.start();
+            console.log("Holistic tracking started - hands, body, and face");
+        } catch (err) {
+            console.error("Holistic tracker error:", err);
+            setError(`Error: ${err.message}`);
+        }
+    };
+
+    return (
+        <div style={{ position: "relative", width: "100%", height: "250px", borderRadius: "10px", overflow: "hidden", background: "#1a1a1a" }}>
+            {error && (
+                <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: "#1a1a1a",
+                    color: "#ff6b6b",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 10,
+                    fontSize: "13px",
+                    padding: "20px",
+                    textAlign: "center",
+                    flexDirection: "column",
+                    gap: "10px"
+                }}>
+                    <span>⚠️ Webcam Error</span>
+                    <span style={{ fontSize: "12px" }}>{error}</span>
+                </div>
+            )}
+            <Webcam 
+                ref={webcamRef} 
+                mirrored={true} 
+                style={{ 
+                    position: "absolute", 
+                    width: "100%", 
+                    height: "100%",
+                }}
+                onUserMedia={onUserMedia}
+                onUserMediaError={(err) => {
+                    console.error("Webcam permission error:", err);
+                    setError("Camera access denied. Check browser permissions.");
+                }}
+                videoConstraints={{
+                    width: 640,
+                    height: 480,
+                    facingMode: "user"
+                }}
+            />
+            <canvas 
+                ref={canvasRef} 
+                style={{ 
+                    position: "absolute", 
+                    width: "100%", 
+                    height: "100%", 
+                    transform: "scaleX(-1)" 
+                }} 
+            />
+        </div>
+    );
+};
 
 function Session() {
     const location = useLocation();
@@ -219,6 +467,7 @@ function Session() {
             feedback,
         };
     };
+
     return (
         <div className="py-5 p-5 body">
 
@@ -317,6 +566,17 @@ function Session() {
                             )}
                         </div>
                     </div>
+
+                    {/* WEBCAM FEED */}
+                    <div className="card shadow-sm mt-4">
+                        <div className="card-body">
+                            <h5 className="card-title mb-3 text-white">
+                                <i className="bi bi-camera-video me-2"></i>
+                                Webcam Feed
+                            </h5>
+                            <HandTracker />
+                        </div>
+                    </div>
                 </div>
 
                 {/* RIGHT: TELEPROMPTER */}
@@ -355,4 +615,5 @@ function Session() {
         </div>
     );
 }
+
 export default Session;
