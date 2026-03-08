@@ -1,13 +1,15 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from speechbrain.inference import Inference
-import torchaudio
-import string
 import os
-import tempfile 
+import io
+import wave
+import numpy as np
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from speechbrain.inference import EncoderDecoderASR
+from pydub import AudioSegment
 
 app = FastAPI()
 
+# Allow React to communicate with Python
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,44 +18,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load SpeechBrain Model (This happens once at startup)
+# 'asr-wav-en-cv' is a lightweight English model
 print("Loading SpeechBrain model...")
-asr_model = Inference.from_pretrained(
-    model_path="speechbrain/asr/whisper/whisper-medium"
+asr_model = EncoderDecoderASR.from_hparams(
+    source="speechbrain/asr-wav-en-cv",
+    savedir="pretrained_models/asr-wav-en-cv"
 )
+print("Model loaded successfully.")
 
 def calculate_wpm(text, duration_seconds):
-    if duration_seconds <= 0:
+    if not text or duration_seconds <= 0:
         return 0
-    translator = str.maketrans('', '', string.punctuation)
-    clean_text = text.translate(translator)
-    word_count = len(clean_text.split())
-    return (word_count / duration_seconds) * 60
+    words = text.split()
+    word_count = len(words)
+    wpm = (word_count / duration_seconds) * 60
+    return round(wpm, 2)
 
-@app.post("/analyze-speed")
-async def analyze_speed(file: UploadFile = File(...)):
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
-            temp_path = tmp_file.name
+def get_feedback(wpm):
+    if wpm < 100:
+        return "Too Slow"
+    elif wpm > 150:
+        return "Too Fast"
+    else:
+        return "Normal Pace"
 
-        info = torchaudio.info(temp_path)
-        duration_seconds = info.num_frames / info.sample_rate
+@app.post("/analyze")
+async def analyze_speech(file: UploadFile = File(...)):
+    # Read audio bytes
+    audio_bytes = await file.read()
+    
+    # Convert WebM/MP4 (from browser) to WAV (required by SpeechBrain)
+    # We use pydub to handle the conversion
+    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    wav_buffer = io.BytesIO()
+    audio.export(wav_buffer, format="wav")
+    wav_buffer.seek(0)
 
-        output = asr_model.transcribe_file(temp_path)
-        text = output.get('text', '') if isinstance(output, dict) else output
+    # Calculate duration
+    duration = len(audio) / 1000.0
 
-        wpm = calculate_wpm(text, duration_seconds)
+    # Run ASR (Automatic Speech Recognition)
+    # SpeechBrain returns a list of tokens
+    predicted_tokens = asr_model.transcribe_file(wav_buffer)
+    
+    # predicted_tokens is usually a list like ['hello', 'world']
+    # We join them to get a string
+    text = " ".join(predicted_tokens) if isinstance(predicted_tokens, list) else predicted_tokens
 
-        os.remove(temp_path)
+    # Calculate WPM
+    wpm = calculate_wpm(text, duration)
+    feedback = get_feedback(wpm)
 
-        return {
-            "success": True,
-            "wpm": round(wpm, 2),
-            "word_count": len(text.split()),
-            "duration_seconds": round(duration_seconds, 2),
-            "transcription": text[:200] + "..." if len(text) > 200 else text
-        }
+    return {
+        "text": text,
+        "wpm": wpm,
+        "feedback": feedback,
+        "duration": duration
+    }
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

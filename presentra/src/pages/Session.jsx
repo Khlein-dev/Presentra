@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Holistic } from "@mediapipe/holistic";
@@ -264,6 +265,15 @@ function Session() {
     const [isRunning, setIsRunning] = useState(false);
     const [transcript, setTranscript] = useState("");
     const [timer, setTimer] = useState(0);
+    
+    // LIVE SPEECH ANALYSIS STATE
+    const [liveWPM, setLiveWPM] = useState(0);
+    const [liveFeedback, setLiveFeedback] = useState("");
+    const [wordCount, setWordCount] = useState(0);
+    
+    // Refs for live analysis
+    const wordsSpokenRef = useRef([]);
+    const lastAnalysisTimeRef = useRef(null);
 
     const recognitionRef = useRef(null);
     const scrollRef = useRef(null);
@@ -285,6 +295,13 @@ function Session() {
 
         setTranscript("");
         setTimer(0);
+        
+        // Reset live analysis state
+        setLiveWPM(0);
+        setLiveFeedback("");
+        setWordCount(0);
+        wordsSpokenRef.current = [];
+        lastAnalysisTimeRef.current = Date.now();
 
         if (scrollRef.current) {
             scrollRef.current.scrollTop = 0;
@@ -321,6 +338,34 @@ function Session() {
                 text += event.results[i][0].transcript + " ";
             }
             setTranscript(text);
+            
+            // ===== LIVE SPEECH ANALYSIS =====
+            const currentTranscript = text.trim();
+            const wordsArray = currentTranscript.split(/\s+/).filter(Boolean);
+            const currentWordCount = wordsArray.length;
+            
+            // Get elapsed time in minutes
+            const elapsedMs = Date.now() - lastAnalysisTimeRef.current;
+            const elapsedMinutes = elapsedMs / 60000;
+            
+            // Calculate live WPM (only if we have words and at least 1 second has passed)
+            if (currentWordCount > 0 && elapsedMinutes >= 0.016) { // at least 1 second
+                const calculatedWPM = Math.round(currentWordCount / elapsedMinutes);
+                setLiveWPM(calculatedWPM);
+                setWordCount(currentWordCount);
+                
+                // Determine feedback based on WPM
+                const IDEAL_MIN_WPM = 120;
+                const IDEAL_MAX_WPM = 160;
+                
+                if (calculatedWPM < IDEAL_MIN_WPM) {
+                    setLiveFeedback("Too Slow");
+                } else if (calculatedWPM > IDEAL_MAX_WPM) {
+                    setLiveFeedback("Too Fast");
+                } else {
+                    setLiveFeedback("Good Pace");
+                }
+            }
         };
 
         recognition.start();
@@ -363,12 +408,12 @@ function Session() {
             ? Math.round(totalWords / durationMinutes)
             : 0;
 
-        // Ideal speaking range
+        // Ideal speaking range for presentations is typically around 120-160 WPM
         const IDEAL_MIN_WPM = 120;
         const IDEAL_MAX_WPM = 160;
 
         // Filler words tracking
-        const fillerWords = ["um", "uh", "like", "ah", "so", "you know"];
+        const fillerWords = ["um", "uh", "like", "ah", "so", "you know", "actually", "basically", "literally", "just", "well", "yeah", "hmm"];
         const fillerBreakdown = {};
 
         const lowerTranscript = cleanTranscript.toLowerCase();
@@ -581,6 +626,55 @@ function Session() {
 
                 {/* RIGHT: TELEPROMPTER */}
                 <div className="col-lg-8">
+                    {/* LIVE SPEECH ANALYSIS DISPLAY */}
+                    <div className="card shadow-sm mb-4" style={{ background: liveFeedback === "Good Pace" ? "#1a3d1a" : liveFeedback === "Too Fast" || liveFeedback === "Too Slow" ? "#3d1a1a" : "#2d2d2d" }}>
+                        <div className="card-body text-center">
+                            <h5 className="text-white mb-3">
+                                <i className="bi bi-graph-up me-2"></i>
+                                Live Speech Analysis
+                            </h5>
+                            
+                            <div className="row g-3">
+                                {/* WPM Display */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3">
+                                        <div className="text-muted small">Words Per Minute</div>
+                                        <div className="fs-2 fw-bold text-white">{liveWPM}</div>
+                                    </div>
+                                </div>
+                                
+                                {/* Word Count Display */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3">
+                                        <div className="text-muted small">Words Spoken</div>
+                                        <div className="fs-2 fw-bold text-white">{wordCount}</div>
+                                    </div>
+                                </div>
+                                
+                                {/* Feedback Badge */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3 h-100 d-flex align-items-center justify-content-center">
+                                        {liveFeedback ? (
+                                            <span className={`badge fs-6 px-3 py-2 ${
+                                                liveFeedback === "Good Pace" ? "bg-success" : 
+                                                liveFeedback === "Too Fast" ? "bg-danger" : "bg-warning text-dark"
+                                            }`}>
+                                                {liveFeedback}
+                                            </span>
+                                        ) : (
+                                            <span className="text-muted">Waiting...</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Ideal Range Indicator */}
+                            <div className="mt-3 text-muted small">
+                                Ideal speaking range: 120-160 WPM
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div className="card shadow-sm">
                         <div
                             ref={scrollRef}
