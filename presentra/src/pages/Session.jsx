@@ -286,6 +286,9 @@ const HandTracker = () => {
     );
 };
 
+// All known filler words to check against
+const ALL_FILLER_WORDS = ["um", "uh", "like", "ah", "so", "you know", "actually", "basically", "literally", "just", "well", "yeah", "hmm"];
+
 function Session() {
     const location = useLocation();
     const navigate = useNavigate();
@@ -306,17 +309,60 @@ function Session() {
     const [averageWPM, setAverageWPM] = useState(0);
     const [liveFeedback, setLiveFeedback] = useState("");
     const [wordCount, setWordCount] = useState(0);
-    
+
+    // LIVE VOLUME ANALYZER STATE
+    const [liveVolume, setLiveVolume] = useState(0);        // 0-100 normalized
+    const [volumeLabel, setVolumeLabel] = useState("");     // Too Quiet / Good / Too Loud
+    const [volumeHistory, setVolumeHistory] = useState([]); // rolling ~5s of samples
+
     // Refs for live analysis - rolling window approach
     const wordsSpokenRef = useRef([]); // Store timestamped words for rolling window
     const lastAnalysisTimeRef = useRef(null);
     const lastWordCountRef = useRef(0);
+
+    // Refs for Web Audio API volume analysis
+    const audioContextRef = useRef(null);
+    const analyserRef = useRef(null);
+    const micStreamRef = useRef(null);
+    const volumeRafRef = useRef(null); // requestAnimationFrame handle for volume polling
+    const volumeHistoryRef = useRef([]); // full session volume samples for dashboard
+
+    // Store filler occurrences with timestamps for timeline
+    const fillerTimelineRef = useRef([]); // [{ word, secondsElapsed }]
+    const transcriptRef = useRef(""); // always up-to-date transcript
+
+    // Use a ref for timer so stopSession always has latest value
+    const timerValueRef = useRef(0);
+    useEffect(() => { timerValueRef.current = timer; }, [timer]);
+
+    // Use a ref for averageWPM so stopSession always has latest value
+    const averageWPMRef = useRef(0);
+    useEffect(() => { averageWPMRef.current = averageWPM; }, [averageWPM]);
 
     const recognitionRef = useRef(null);
     const scrollRef = useRef(null);
     const timerRef = useRef(null);
     const animationRef = useRef(null);
     const startTimeRef = useRef(null);
+
+    // Build a set of words in the script (lowercased) so we never flag them as fillers
+    const scriptWordsSet = React.useMemo(() => {
+        if (!script) return new Set();
+        const words = script.toLowerCase().match(/\b\w+\b/g) || [];
+        return new Set(words);
+    }, [script]);
+
+    // Effective filler list = ALL_FILLER_WORDS minus any that appear in the script
+    const effectiveFillerWords = React.useMemo(() => {
+        return ALL_FILLER_WORDS.filter(filler => {
+            // For multi-word fillers (e.g. "you know"), check if the exact phrase appears in the script
+            const parts = filler.split(" ");
+            if (parts.length > 1) {
+                return !script?.toLowerCase().includes(filler);
+            }
+            return !scriptWordsSet.has(filler);
+        });
+    }, [scriptWordsSet, script]);
 
     // ===== START SESSION =====
     const startSession = () => {
@@ -340,6 +386,15 @@ function Session() {
         setWordCount(0);
         wordsSpokenRef.current = [];
         lastAnalysisTimeRef.current = Date.now();
+        lastWordCountRef.current = 0;
+        fillerTimelineRef.current = [];
+        transcriptRef.current = "";
+
+        // Reset volume state
+        setLiveVolume(0);
+        setVolumeLabel("");
+        setVolumeHistory([]);
+        volumeHistoryRef.current = [];
 
         if (scrollRef.current) {
             scrollRef.current.scrollTop = 0;
@@ -370,12 +425,24 @@ function Session() {
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
+        // Snapshot of transcript at the start of each recognition session
+        // so restarts don't overwrite previously accumulated text
+        let sessionBaseTranscript = "";
+
+        recognition.onstart = () => {
+            sessionBaseTranscript = transcriptRef.current;
+        };
+
         recognition.onresult = (event) => {
-            let text = "";
+            // Build only what this recognition session has heard
+            let sessionText = "";
             for (let i = 0; i < event.results.length; i++) {
-                text += event.results[i][0].transcript + " ";
+                sessionText += event.results[i][0].transcript + " ";
             }
+            // Append to whatever was said before this session started
+            const text = sessionBaseTranscript + sessionText;
             setTranscript(text);
+            transcriptRef.current = text;
             
             // ===== LIVE SPEECH ANALYSIS (Rolling Window) =====
             const currentTranscript = text.trim();
@@ -384,12 +451,47 @@ function Session() {
             
             // Get current time
             const now = Date.now();
+            const secondsElapsed = Math.floor((now - startTimeRef.current) / 1000);
             
             // Add new words with timestamp to rolling window
             const newWords = wordsArray.slice(lastWordCountRef.current);
-            newWords.forEach(word => {
+            newWords.forEach((word, newWordIdx) => {
                 wordsSpokenRef.current.push({ word, timestamp: now });
+
+                // Detect new filler word occurrences with timestamps
+                const lowerWord = word.toLowerCase().replace(/[^a-z]/g, "");
+                if (effectiveFillerWords.includes(lowerWord)) {
+                    // Grab ~5-word context window around filler from the full transcript
+                    const fillerGlobalIdx = lastWordCountRef.current + newWordIdx;
+                    const contextStart = Math.max(0, fillerGlobalIdx - 3);
+                    const contextEnd = Math.min(wordsArray.length, fillerGlobalIdx + 4);
+                    const contextWords = wordsArray.slice(contextStart, contextEnd);
+                    // Wrap the filler word in markers so Dashboard can highlight it
+                    const fillerLocalIdx = fillerGlobalIdx - contextStart;
+                    contextWords[fillerLocalIdx] = `__${contextWords[fillerLocalIdx]}__`;
+                    const snippet = contextWords.join(" ");
+
+                    fillerTimelineRef.current.push({ word: lowerWord, secondsElapsed, snippet });
+                }
             });
+
+            // Check for new multi-word filler phrases in the latest spoken chunk
+            const newChunk = newWords.join(" ").toLowerCase();
+            effectiveFillerWords.forEach(filler => {
+                if (filler.includes(" ") && newChunk.includes(filler)) {
+                    // Build snippet for phrase fillers too
+                    const phraseIdx = wordsArray.findLastIndex((_, i) =>
+                        wordsArray.slice(i, i + filler.split(" ").length).join(" ").toLowerCase() === filler
+                    );
+                    const contextStart = Math.max(0, phraseIdx - 3);
+                    const contextEnd = Math.min(wordsArray.length, phraseIdx + filler.split(" ").length + 3);
+                    const contextWords = [...wordsArray.slice(contextStart, contextEnd)];
+                    const snippet = contextWords.join(" ");
+
+                    fillerTimelineRef.current.push({ word: filler, secondsElapsed, isPhrase: true, snippet });
+                }
+            });
+
             lastWordCountRef.current = currentWordCount;
             
             // Keep only words from the last 10 seconds (rolling window)
@@ -442,6 +544,19 @@ function Session() {
             }
         };
 
+        recognition.onend = () => {
+            // Browser silently stops recognition after a pause — restart if session still running
+            if (recognitionRef.current) {
+                try { recognitionRef.current.start(); } catch (e) { /* already starting */ }
+            }
+        };
+
+        recognition.onerror = (event) => {
+            // "no-speech" and "aborted" are non-fatal — onend will handle the restart
+            if (event.error === "no-speech" || event.error === "aborted") return;
+            console.error("Speech recognition error:", event.error);
+        };
+
         recognition.start();
         recognitionRef.current = recognition;
 
@@ -451,6 +566,65 @@ function Session() {
             setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
         }, 1000);
 
+        // VOLUME ANALYZER (Web Audio API)
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+            .then((stream) => {
+                micStreamRef.current = stream;
+
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                audioContextRef.current = audioCtx;
+
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.6; // Smooth out jitter
+                analyserRef.current = analyser;
+
+                const source = audioCtx.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                // Poll volume ~20x per second
+                const pollVolume = () => {
+                    analyser.getByteFrequencyData(dataArray);
+
+                    // RMS of frequency data as a proxy for volume
+                    const sum = dataArray.reduce((acc, val) => acc + val * val, 0);
+                    const rms = Math.sqrt(sum / dataArray.length);
+
+                    // Normalize to 0-100 (typical rms range ~0-100 for speech)
+                    const normalized = Math.min(100, Math.round(rms));
+
+                    setLiveVolume(normalized);
+
+                    // Accumulate full session history for dashboard
+                    volumeHistoryRef.current.push(normalized);
+
+                    // Volume label thresholds
+                    if (normalized < 15) {
+                        setVolumeLabel("Too Quiet");
+                    } else if (normalized > 70) {
+                        setVolumeLabel("Too Loud");
+                    } else {
+                        setVolumeLabel("Good");
+                    }
+
+                    // Rolling history — keep last 60 samples (~3s at 20fps)
+                    setVolumeHistory(prev => {
+                        const next = [...prev, normalized];
+                        return next.length > 60 ? next.slice(next.length - 60) : next;
+                    });
+
+                    volumeRafRef.current = requestAnimationFrame(pollVolume);
+                };
+
+                volumeRafRef.current = requestAnimationFrame(pollVolume);
+                console.log("Volume analyzer started");
+            })
+            .catch((err) => {
+                console.warn("Volume analyzer: mic access denied or unavailable", err);
+            });
+
         setIsRunning(true);
     };
 
@@ -459,23 +633,37 @@ function Session() {
         cancelAnimationFrame(animationRef.current);
         clearInterval(timerRef.current);
 
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
+        // Stop volume analyzer
+        cancelAnimationFrame(volumeRafRef.current);
+        if (micStreamRef.current) {
+            micStreamRef.current.getTracks().forEach(track => track.stop());
+            console.log("Mic stream stopped");
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            console.log("AudioContext closed");
         }
 
         setIsRunning(false);
 
-        const results = analyzeSpeech();
+        const stoppedRecognition = recognitionRef.current;
+        recognitionRef.current = null; // clear ref BEFORE stopping so onend doesn't restart
+        if (stoppedRecognition) stoppedRecognition.stop();
+
+        const results = analyzeSpeech(transcriptRef.current, timerValueRef.current, fillerTimelineRef.current);
+
+        // Add averageWPM to the results (use ref to avoid stale closure)
+        results.summary.averageWPM = averageWPMRef.current;
+
         navigate("/dashboard", { state: results });
     };
 
     // ===== ANALYSIS =====
-    const analyzeSpeech = () => {
-        const cleanTranscript = transcript.trim();
+    const analyzeSpeech = (finalTranscript, durationSeconds, fillerTimeline) => {
+        const cleanTranscript = (finalTranscript || "").trim();
         const wordsArray = cleanTranscript.split(/\s+/).filter(Boolean);
         const totalWords = wordsArray.length;
 
-        const durationSeconds = timer;
         const durationMinutes = durationSeconds / 60 || 1;
 
         const wpm = totalWords > 0
@@ -487,14 +675,14 @@ function Session() {
         const IDEAL_MAX_WPM = 160;
 
         // Filler words tracking
-        const fillerWords = ["um", "uh", "like", "ah", "so", "you know", "actually", "basically", "literally", "just", "well", "yeah", "hmm"];
+        // Only count fillers not present in the script
         const fillerBreakdown = {};
 
         const lowerTranscript = cleanTranscript.toLowerCase();
         let fillerCount = 0;
 
-        fillerWords.forEach((word) => {
-            const regex = new RegExp("\\b" + word + "\\b", "g");
+        effectiveFillerWords.forEach((word) => {
+            const regex = new RegExp("\\b" + word.replace(" ", "\\s+") + "\\b", "g");
             const matches = lowerTranscript.match(regex);
             const count = matches ? matches.length : 0;
 
@@ -557,6 +745,12 @@ function Session() {
             feedback.push("Great pacing within ideal speaking range.");
         }
 
+        // Deduplicate phrase fillers (single-word matches already counted, remove double-counting)
+        const cleanedTimeline = fillerTimeline.filter(entry => {
+            if (entry.isPhrase) return true; // keep phrase hits
+            return !entry.word.includes(" "); // skip phrase words counted individually
+        });
+
         return {
             summary: {
                 durationSeconds,
@@ -570,6 +764,9 @@ function Session() {
                 fillerRate: Number(fillerRate),
                 fillerBreakdown,
                 fluencyScore,
+                fillerTimeline: cleanedTimeline,
+                sessionDuration: durationSeconds,
+                excludedFillers: ALL_FILLER_WORDS.filter(f => !effectiveFillerWords.includes(f)),
             },
 
             pacing: {
@@ -583,7 +780,17 @@ function Session() {
                 performanceLevel,
             },
 
+            // Volume analysis data for dashboard graph
+            volume: {
+                history: volumeHistoryRef.current,
+                quietThreshold: 15,  // below this = Too Quiet
+                loudThreshold: 70,   // above this = Too Loud
+                sessionDuration: durationSeconds,
+            },
+
             feedback,
+            transcript: cleanTranscript,
+            script,
         };
     };
 
@@ -740,6 +947,83 @@ function Session() {
                                         )}
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* LIVE VOLUME ANALYZER */}
+                            <div className="bg-dark rounded p-3 mt-3">
+                                <div className="d-flex justify-content-between align-items-center mb-2">
+                                    <span className="text-white small">
+                                        <i className="bi bi-volume-up me-1"></i>
+                                        Live Volume
+                                    </span>
+                                    {/* Volume label badge */}
+                                    {volumeLabel ? (
+                                        <span className={`badge ${
+                                            volumeLabel === "Good" ? "bg-success" :
+                                            volumeLabel === "Too Loud" ? "bg-danger" : "bg-warning text-dark"
+                                        }`}>
+                                            {volumeLabel}
+                                        </span>
+                                    ) : (
+                                        <span className="text-muted small">Waiting...</span>
+                                    )}
+                                </div>
+
+                                {/* Volume meter bar */}
+                                <div style={{
+                                    height: "10px",
+                                    background: "rgba(255,255,255,0.08)",
+                                    borderRadius: "999px",
+                                    overflow: "hidden",
+                                    marginBottom: "10px",
+                                }}>
+                                    <div style={{
+                                        height: "100%",
+                                        width: `${liveVolume}%`,
+                                        borderRadius: "999px",
+                                        background: liveVolume > 70 ? "#ef4444" : liveVolume < 15 ? "#f59e0b" : "#22c55e",
+                                        transition: "width 0.08s ease-out, background 0.2s",
+                                    }} />
+                                </div>
+
+                                {/* Volume sparkline — last ~3s of history */}
+                                {volumeHistory.length > 1 && (() => {
+                                    const pts = volumeHistory;
+                                    const svgW = 500, svgH = 40;
+                                    const n = pts.length;
+                                    const xp = (i) => (i / (n - 1)) * svgW;
+                                    const yp = (v) => svgH - (v / 100) * svgH;
+
+                                    // Smooth cubic bezier path
+                                    let d = `M ${xp(0)},${yp(pts[0])}`;
+                                    for (let i = 0; i < n - 1; i++) {
+                                        const cpx = (xp(i + 1) - xp(i)) * 0.4;
+                                        d += ` C ${xp(i) + cpx},${yp(pts[i])} ${xp(i + 1) - cpx},${yp(pts[i + 1])} ${xp(i + 1)},${yp(pts[i + 1])}`;
+                                    }
+
+                                    const areaD = `M 0,${svgH} L ${xp(0)},${yp(pts[0])} ${d.slice(d.indexOf("C"))} L ${xp(n - 1)},${svgH} Z`;
+
+                                    const lineColor = liveVolume > 70 ? "#ef4444" : liveVolume < 15 ? "#f59e0b" : "#22c55e";
+
+                                    return (
+                                        <svg viewBox={`0 0 ${svgW} ${svgH}`}
+                                            style={{ width: "100%", height: "40px", display: "block" }}
+                                            preserveAspectRatio="none"
+                                        >
+                                            <defs>
+                                                <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor={lineColor} stopOpacity="0.3" />
+                                                    <stop offset="100%" stopColor={lineColor} stopOpacity="0.02" />
+                                                </linearGradient>
+                                            </defs>
+                                            {/* Area */}
+                                            <path d={areaD} fill="url(#volGrad)" />
+                                            {/* Line */}
+                                            <path d={d} fill="none" stroke={lineColor}
+                                                strokeWidth="1.5" strokeLinecap="round" />
+                                        </svg>
+                                    );
+                                })()}
                             </div>
                             
                             {/* Ideal Range Indicator */}
