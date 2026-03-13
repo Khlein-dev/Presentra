@@ -451,7 +451,7 @@ function Session() {
             
             // Get current time
             const now = Date.now();
-            const secondsElapsed = Math.floor((now - startTimeRef.current) / 1000);
+            const secondsElapsed = Math.floor((now - startTimeRef.current) / 5000);
             
             // Add new words with timestamp to rolling window
             const newWords = wordsArray.slice(lastWordCountRef.current);
@@ -531,7 +531,7 @@ function Session() {
                 setAverageWPM(avgWPM);
                 
                 // Determine feedback based on WPM
-                const IDEAL_MIN_WPM = 90;
+                const IDEAL_MIN_WPM = 100;
                 const IDEAL_MAX_WPM = 160;
                 
                 if (calculatedWPM < IDEAL_MIN_WPM) {
@@ -601,9 +601,9 @@ function Session() {
                     volumeHistoryRef.current.push(normalized);
 
                     // Volume label thresholds
-                    if (normalized < 15) {
+                    if (normalized < 40) {
                         setVolumeLabel("Too Quiet");
-                    } else if (normalized > 70) {
+                    } else if (normalized > 250) {
                         setVolumeLabel("Too Loud");
                     } else {
                         setVolumeLabel("Good");
@@ -916,24 +916,17 @@ function Session() {
                             </h5>
                             
                             <div className="row g-3">
-                                {/* WPM Display */}
-                                <div className="col-4">
-                                    <div className="bg-dark rounded p-3">
-                                        <div className="text-muted small text-white">Current WPM</div>
-                                        <div className="fs-2 fw-bold text-white">{liveWPM}</div>
-                                    </div>
-                                </div>
                                 
                                 {/* Word Count Display */}
-                                <div className="col-4">
+                                <div className="col-6">
                                     <div className="bg-dark rounded p-3">
-                                        <div className="text-muted small text-white">Words Spoken</div>
+                                        <div className="small text-white">Words Spoken</div>
                                         <div className="fs-2 fw-bold text-white">{wordCount}</div>
                                     </div>
                                 </div>
                                 
                                 {/* Feedback Badge */}
-                                <div className="col-4">
+                                <div className="col-6">
                                     <div className="bg-dark rounded p-3 h-100 d-flex align-items-center justify-content-center">
                                         {liveFeedback ? (
                                             <span className={`badge fs-6 px-3 py-2 ${
@@ -943,7 +936,7 @@ function Session() {
                                                 {liveFeedback}
                                             </span>
                                         ) : (
-                                            <span className="text-muted">Waiting...</span>
+                                            <span className="text-white">Waiting...</span>
                                         )}
                                     </div>
                                 </div>
@@ -985,49 +978,10 @@ function Session() {
                                         transition: "width 0.08s ease-out, background 0.2s",
                                     }} />
                                 </div>
-
-                                {/* Volume sparkline — last ~3s of history */}
-                                {volumeHistory.length > 1 && (() => {
-                                    const pts = volumeHistory;
-                                    const svgW = 500, svgH = 40;
-                                    const n = pts.length;
-                                    const xp = (i) => (i / (n - 1)) * svgW;
-                                    const yp = (v) => svgH - (v / 100) * svgH;
-
-                                    // Smooth cubic bezier path
-                                    let d = `M ${xp(0)},${yp(pts[0])}`;
-                                    for (let i = 0; i < n - 1; i++) {
-                                        const cpx = (xp(i + 1) - xp(i)) * 0.4;
-                                        d += ` C ${xp(i) + cpx},${yp(pts[i])} ${xp(i + 1) - cpx},${yp(pts[i + 1])} ${xp(i + 1)},${yp(pts[i + 1])}`;
-                                    }
-
-                                    const areaD = `M 0,${svgH} L ${xp(0)},${yp(pts[0])} ${d.slice(d.indexOf("C"))} L ${xp(n - 1)},${svgH} Z`;
-
-                                    const lineColor = liveVolume > 70 ? "#ef4444" : liveVolume < 15 ? "#f59e0b" : "#22c55e";
-
-                                    return (
-                                        <svg viewBox={`0 0 ${svgW} ${svgH}`}
-                                            style={{ width: "100%", height: "40px", display: "block" }}
-                                            preserveAspectRatio="none"
-                                        >
-                                            <defs>
-                                                <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="0%" stopColor={lineColor} stopOpacity="0.3" />
-                                                    <stop offset="100%" stopColor={lineColor} stopOpacity="0.02" />
-                                                </linearGradient>
-                                            </defs>
-                                            {/* Area */}
-                                            <path d={areaD} fill="url(#volGrad)" />
-                                            {/* Line */}
-                                            <path d={d} fill="none" stroke={lineColor}
-                                                strokeWidth="1.5" strokeLinecap="round" />
-                                        </svg>
-                                    );
-                                })()}
                             </div>
                             
                             {/* Ideal Range Indicator */}
-                            <div className="mt-3 text-muted small">
+                            <div className="mt-3 text-white small">
                                 Ideal speaking range: 90-160 WPM | Based on last 10 seconds
                             </div>
                         </div>

@@ -351,6 +351,9 @@ function FluencyAnalyzer({ fluency, summary }) {
     );
 }
 
+
+
+
 // ---- VOLUME GRAPH COMPONENT ----
 function VolumeGraph({ volume }) {
     if (!volume || !volume.history || volume.history.length < 2) return null;
@@ -580,7 +583,7 @@ function Dashboard() {
                 <h2>Pacing Analysis</h2>
                 <div style={cardStyle}>
                     <p>Speaking Speed: {pacing?.wpm} WPM</p>
-                    <p>Ideal Range: {pacing?.idealRange}</p>
+                    <p>Ideal Range: 90-160 WPM</p>
                     <p>Pace Score: {pacing?.paceScore}</p>
                 </div>
             </div>
