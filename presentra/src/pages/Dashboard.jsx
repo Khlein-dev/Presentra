@@ -297,7 +297,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                                             }}>"{entry.word}" @ {formatTime(entry.secondsElapsed)}</span>
                                             {entry.snippet && (
                                                 <div style={{ fontSize: "12px", color: "#cbd5e1", lineHeight: 1.5 }}>
-                                                        {/* Render snippet with filler word highlighted */}
+                                                    {/* Render snippet with filler word highlighted */}
                                                     {entry.snippet.split(" ").map((w, wi) => {
                                                         const isFillerWord = w.startsWith("__") && w.endsWith("__");
                                                         const display = w.replace(/^__|__$/g, "");
@@ -565,6 +565,7 @@ function Dashboard() {
                 <div style={cardStyle}>
                     <p>Duration: {summary?.durationFormatted}</p>
                     <p>Total Words: {summary?.totalWords}</p>
+                    <p>Average WPM: {summary?.averageWPM || summary?.wpm} WPM</p>
                 </div>
             </div>
 
@@ -574,7 +575,15 @@ function Dashboard() {
             {/* VOLUME ANALYSIS */}
             <VolumeGraph volume={volume} />
 
-            {/* Pace analysis removed - no WPM data */}
+            {/* PACING */}
+            <div style={{ marginTop: "40px" }}>
+                <h2>Pacing Analysis</h2>
+                <div style={cardStyle}>
+                    <p>Speaking Speed: {pacing?.wpm} WPM</p>
+                    <p>Ideal Range: {pacing?.idealRange}</p>
+                    <p>Pace Score: {pacing?.paceScore}</p>
+                </div>
+            </div>
 
             {/* FEEDBACK */}
             <div style={{ marginTop: "40px" }}>

@@ -304,8 +304,10 @@ function Session() {
     const [transcript, setTranscript] = useState("");
     const [timer, setTimer] = useState(0);
     
-    // LIVE SPEECH ANALYSIS STATE (WPM removed)
-    const [liveFeedback, setLiveFeedback] = useState(""); // Repurposed for other feedback if needed
+    // LIVE SPEECH ANALYSIS STATE
+    const [liveWPM, setLiveWPM] = useState(0);
+    const [averageWPM, setAverageWPM] = useState(0);
+    const [liveFeedback, setLiveFeedback] = useState("");
     const [wordCount, setWordCount] = useState(0);
 
     // LIVE VOLUME ANALYZER STATE
@@ -333,7 +335,9 @@ function Session() {
     const timerValueRef = useRef(0);
     useEffect(() => { timerValueRef.current = timer; }, [timer]);
 
-
+    // Use a ref for averageWPM so stopSession always has latest value
+    const averageWPMRef = useRef(0);
+    useEffect(() => { averageWPMRef.current = averageWPM; }, [averageWPM]);
 
     const recognitionRef = useRef(null);
     const scrollRef = useRef(null);
@@ -375,7 +379,9 @@ function Session() {
         setTranscript("");
         setTimer(0);
         
-        // Reset live analysis state (WPM removed)
+        // Reset live analysis state
+        setLiveWPM(0);
+        setAverageWPM(0);
         setLiveFeedback("");
         setWordCount(0);
         wordsSpokenRef.current = [];
@@ -489,15 +495,53 @@ function Session() {
             lastWordCountRef.current = currentWordCount;
             
             // Keep only words from the last 10 seconds (rolling window)
-            const WINDOW_SIZE_MS = 15000; // 10 seconds
+            const WINDOW_SIZE_MS = 10000; // 10 seconds
             const windowStartTime = now - WINDOW_SIZE_MS;
             
             // Filter to keep only recent words within the window
             const recentWords = wordsSpokenRef.current.filter(w => w.timestamp >= windowStartTime);
             wordsSpokenRef.current = recentWords;
             
-            // WPM calculation removed
-            setLiveFeedback("Analyzing...");
+            const recentWordCount = recentWords.length;
+            const windowDurationSeconds = 10; // Fixed 10-second window
+            
+            // Calculate WPM based on rolling window
+            if (recentWordCount > 0) {
+                // Calculate actual window duration if less than 10 seconds
+                let actualDuration = windowDurationSeconds;
+                if (recentWords.length > 0) {
+                    const oldestTimestamp = recentWords[0].timestamp;
+                    const elapsed = (now - oldestTimestamp) / 1000;
+                    if (elapsed < windowDurationSeconds) {
+                        actualDuration = elapsed;
+                    }
+                }
+                
+                // Calculate WPM: (words in window / duration in minutes)
+                const calculatedWPM = Math.round((recentWordCount / actualDuration) * 60);
+                setLiveWPM(calculatedWPM);
+                setWordCount(currentWordCount);
+                
+                // Calculate average WPM (total words / total time since session start)
+                const sessionElapsedMs = now - lastAnalysisTimeRef.current;
+                const sessionElapsedMinutes = sessionElapsedMs / 60000;
+                const avgWPM = currentWordCount > 0 
+                    ? Math.round(currentWordCount / sessionElapsedMinutes)
+                    : 0;
+                setAverageWPM(avgWPM);
+                
+                // Determine feedback based on WPM
+                const IDEAL_MIN_WPM = 90;
+                const IDEAL_MAX_WPM = 160;
+                
+                if (calculatedWPM < IDEAL_MIN_WPM) {
+                    setLiveFeedback("Too Slow");
+                } else if (calculatedWPM > IDEAL_MAX_WPM) {
+                    setLiveFeedback("Too Fast");
+                } else {
+                    setLiveFeedback("Good Pace");
+                }
+            }
         };
 
         recognition.onend = () => {
@@ -608,7 +652,8 @@ function Session() {
 
         const results = analyzeSpeech(transcriptRef.current, timerValueRef.current, fillerTimelineRef.current);
 
-
+        // Add averageWPM to the results (use ref to avoid stale closure)
+        results.summary.averageWPM = averageWPMRef.current;
 
         navigate("/dashboard", { state: results });
     };
@@ -619,7 +664,19 @@ function Session() {
         const wordsArray = cleanTranscript.split(/\s+/).filter(Boolean);
         const totalWords = wordsArray.length;
 
-        const fillerBreakdown = {}; 
+        const durationMinutes = durationSeconds / 60 || 1;
+
+        const wpm = totalWords > 0
+            ? Math.round(totalWords / durationMinutes)
+            : 0;
+
+        // Ideal speaking range for presentations is typically around 120-160 WPM
+        const IDEAL_MIN_WPM = 120;
+        const IDEAL_MAX_WPM = 160;
+
+        // Filler words tracking
+        // Only count fillers not present in the script
+        const fillerBreakdown = {};
 
         const lowerTranscript = cleanTranscript.toLowerCase();
         let fillerCount = 0;
@@ -645,8 +702,13 @@ function Session() {
         let fluencyScore = 100 - fillerCount * 3;
         if (fluencyScore < 0) fluencyScore = 0;
 
-        // Pace scoring removed (no WPM)
+        // Pace score
         let paceScore = 100;
+        if (wpm < IDEAL_MIN_WPM) {
+            paceScore -= 15;
+        } else if (wpm > IDEAL_MAX_WPM) {
+            paceScore -= 15;
+        }
 
         // Final weighted score
         let overallScore = Math.round(
@@ -675,7 +737,13 @@ function Session() {
             feedback.push("High filler usage detected. Practice intentional pauses.");
         }
 
-        // Pace feedback removed
+        if (wpm < IDEAL_MIN_WPM) {
+            feedback.push("Your pace is slightly slow. Increase energy and projection.");
+        } else if (wpm > IDEAL_MAX_WPM) {
+            feedback.push("You're speaking too fast. Slow down for clarity.");
+        } else {
+            feedback.push("Great pacing within ideal speaking range.");
+        }
 
         // Deduplicate phrase fillers (single-word matches already counted, remove double-counting)
         const cleanedTimeline = fillerTimeline.filter(entry => {
@@ -688,7 +756,7 @@ function Session() {
                 durationSeconds,
                 durationFormatted: `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`,
                 totalWords,
-
+                wpm,
             },
 
             fluency: {
@@ -702,6 +770,8 @@ function Session() {
             },
 
             pacing: {
+                wpm,
+                idealRange: `${IDEAL_MIN_WPM}-${IDEAL_MAX_WPM} WPM`,
                 paceScore,
             },
 
@@ -846,11 +916,35 @@ function Session() {
                             </h5>
                             
                             <div className="row g-3">
-                                {/* Volume Only Display */}
-                                <div className="col-12">
+                                {/* WPM Display */}
+                                <div className="col-4">
                                     <div className="bg-dark rounded p-3">
-                                        <div className="text-muted small text-white">Live Speech Analysis</div>
-                                        <div className="text-white fs-4">{liveFeedback || "Analyzing..."}</div>
+                                        <div className="text-muted small text-white">Current WPM</div>
+                                        <div className="fs-2 fw-bold text-white">{liveWPM}</div>
+                                    </div>
+                                </div>
+                                
+                                {/* Word Count Display */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3">
+                                        <div className="text-muted small text-white">Words Spoken</div>
+                                        <div className="fs-2 fw-bold text-white">{wordCount}</div>
+                                    </div>
+                                </div>
+                                
+                                {/* Feedback Badge */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3 h-100 d-flex align-items-center justify-content-center">
+                                        {liveFeedback ? (
+                                            <span className={`badge fs-6 px-3 py-2 ${
+                                                liveFeedback === "Good Pace" ? "bg-success" : 
+                                                liveFeedback === "Too Fast" ? "bg-danger" : "bg-warning text-dark"
+                                            }`}>
+                                                {liveFeedback}
+                                            </span>
+                                        ) : (
+                                            <span className="text-muted">Waiting...</span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -932,7 +1026,10 @@ function Session() {
                                 })()}
                             </div>
                             
-
+                            {/* Ideal Range Indicator */}
+                            <div className="mt-3 text-muted small">
+                                Ideal speaking range: 90-160 WPM | Based on last 10 seconds
+                            </div>
                         </div>
                     </div>
                     
