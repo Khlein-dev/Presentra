@@ -536,8 +536,8 @@ function Session() {
                 setAverageWPM(avgWPM);
                 
                 // Determine feedback based on WPM
-                const IDEAL_MIN_WPM = 100;
-                const IDEAL_MAX_WPM = 160;
+                const IDEAL_MIN_WPM = 90;
+                const IDEAL_MAX_WPM = 180;
                 
                 if (calculatedWPM < IDEAL_MIN_WPM) {
                     setLiveFeedback("Too Slow");
@@ -656,8 +656,6 @@ function Session() {
         if (stoppedRecognition) stoppedRecognition.stop();
 
         const results = analyzeSpeech(transcriptRef.current, timerValueRef.current, fillerTimelineRef.current);
-
-        results.summary.fillerCounter = fillerCounter;
 
         // Add averageWPM to the results (use ref to avoid stale closure)
         results.summary.averageWPM = averageWPMRef.current;

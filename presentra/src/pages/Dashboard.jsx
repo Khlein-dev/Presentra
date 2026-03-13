@@ -7,7 +7,7 @@ function FluencyAnalyzer({ fluency, summary }) {
 
     if (!fluency) return null;
 
-    const fillerCounter = summary?.fillerCounter || 0;
+    const { fillerCount, ...rest } = fluency;
 
     const { fillerRate, fillerBreakdown, fluencyScore, fillerTimeline, sessionDuration, excludedFillers } = fluency;
 
@@ -56,7 +56,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                     <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Total Filler Words</p>
-                            <p style={{ fontSize: "24px", fontWeight: "bold", color: "white", margin: 0 }}>{fillerCounter}</p>
+                            <p style={{ fontSize: "24px", fontWeight: "bold", color: "white", margin: 0 }}>{fluency.fillerCount}</p>
                         </div>
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Filler Rate</p>
@@ -66,7 +66,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Rating</p>
                             <p style={{ fontSize: "18px", fontWeight: "bold", margin: 0, color: scoreColor }}>
-                                {fillerCounter === 0 ? "🏆 Flawless" : fillerCounter <= 5 ? "✅ Great" : fillerCounter <= 10 ? "⚠️ Fair" : "❌ Needs Work"}
+                                {fluency.fillerCount === 0 ? "🏆 Flawless" : fluency.fillerCount <= 5 ? "✅ Great" : fluency.fillerCount <= 10 ? "⚠️ Fair" : "❌ Needs Work"}
                             </p>
                         </div>
                     </div>
@@ -90,7 +90,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                         {Object.entries(fillerBreakdown)
                             .sort((a, b) => b[1] - a[1])
                             .map(([word, count]) => {
-                                const pct = Math.round((count / fillerCounter) * 100);
+                                const pct = Math.round((count / fluency.fillerCount) * 100);
                                 return (
                                     <div key={word} style={{
                                         background: "rgba(239,68,68,0.15)",
@@ -571,6 +571,8 @@ function Dashboard() {
                     <p>Duration: {summary?.durationFormatted}</p>
                     <p>Total Words: {summary?.totalWords}</p>
                     <p>Average WPM: {summary?.averageWPM || summary?.wpm} WPM</p>
+                    <p>Ideal Range: 90-160 WPM</p>
+                    <p>Pace Score: {pacing?.paceScore}</p>
                 </div>
             </div>
 
@@ -578,17 +580,7 @@ function Dashboard() {
             <FluencyAnalyzer fluency={fluency} summary={summary} />
 
             {/* VOLUME ANALYSIS */}
-            <VolumeGraph volume={volume} />
-
-            {/* PACING */}
-            <div style={{ marginTop: "40px" }}>
-                <h2>Pacing Analysis</h2>
-                <div style={cardStyle}>
-                    <p>Speaking Speed: {pacing?.wpm} WPM</p>
-                    <p>Ideal Range: 90-160 WPM</p>
-                    <p>Pace Score: {pacing?.paceScore}</p>
-                </div>
-            </div>
+            <VolumeGraph volume={volume} /> 
 
             {/* FEEDBACK */}
             <div style={{ marginTop: "40px" }}>
