@@ -7,7 +7,9 @@ function FluencyAnalyzer({ fluency, summary }) {
 
     if (!fluency) return null;
 
-    const { fillerCount, fillerRate, fillerBreakdown, fluencyScore, fillerTimeline, sessionDuration, excludedFillers } = fluency;
+    const fillerCounter = summary?.fillerCounter || 0;
+
+    const { fillerRate, fillerBreakdown, fluencyScore, fillerTimeline, sessionDuration, excludedFillers } = fluency;
 
     // Color for fluency score
     const scoreColor = fluencyScore >= 80 ? "#22c55e" : fluencyScore >= 50 ? "#f59e0b" : "#ef4444";
@@ -54,7 +56,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                     <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Total Filler Words</p>
-                            <p style={{ fontSize: "24px", fontWeight: "bold", color: "white", margin: 0 }}>{fillerCount}</p>
+                            <p style={{ fontSize: "24px", fontWeight: "bold", color: "white", margin: 0 }}>{fillerCounter}</p>
                         </div>
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Filler Rate</p>
@@ -64,7 +66,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                         <div>
                             <p style={{ color: "#94a3b8", fontSize: "13px", margin: "0 0 4px" }}>Rating</p>
                             <p style={{ fontSize: "18px", fontWeight: "bold", margin: 0, color: scoreColor }}>
-                                {fillerCount === 0 ? "🏆 Flawless" : fillerCount <= 3 ? "✅ Great" : fillerCount <= 8 ? "⚠️ Fair" : "❌ Needs Work"}
+                                {fillerCounter === 0 ? "🏆 Flawless" : fillerCounter <= 5 ? "✅ Great" : fillerCounter <= 10 ? "⚠️ Fair" : "❌ Needs Work"}
                             </p>
                         </div>
                     </div>
@@ -88,7 +90,7 @@ function FluencyAnalyzer({ fluency, summary }) {
                         {Object.entries(fillerBreakdown)
                             .sort((a, b) => b[1] - a[1])
                             .map(([word, count]) => {
-                                const pct = Math.round((count / fillerCount) * 100);
+                                const pct = Math.round((count / fillerCounter) * 100);
                                 return (
                                     <div key={word} style={{
                                         background: "rgba(239,68,68,0.15)",

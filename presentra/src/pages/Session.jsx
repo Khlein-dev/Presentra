@@ -364,6 +364,11 @@ function Session() {
         });
     }, [scriptWordsSet, script]);
 
+    const [fillerCounter, setFillerCounter] = useState(0);
+    if (effectiveFillerWords.includes(ALL_FILLER_WORDS)) {
+        setFillerCounter(prev => prev + 1);
+    }
+    
     // ===== START SESSION =====
     const startSession = () => {
         if (!script) {
@@ -651,6 +656,8 @@ function Session() {
         if (stoppedRecognition) stoppedRecognition.stop();
 
         const results = analyzeSpeech(transcriptRef.current, timerValueRef.current, fillerTimelineRef.current);
+
+        results.summary.fillerCounter = fillerCounter;
 
         // Add averageWPM to the results (use ref to avoid stale closure)
         results.summary.averageWPM = averageWPMRef.current;
