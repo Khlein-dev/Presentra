@@ -313,7 +313,6 @@ function Session() {
     // LIVE VOLUME ANALYZER STATE
     const [liveVolume, setLiveVolume] = useState(0);        // 0-100 normalized
     const [volumeLabel, setVolumeLabel] = useState("");     // Too Quiet / Good / Too Loud
-    const [volumeHistory, setVolumeHistory] = useState([]); // rolling ~5s of samples
 
     // Refs for live analysis - rolling window approach
     const wordsSpokenRef = useRef([]); // Store timestamped words for rolling window
@@ -364,11 +363,6 @@ function Session() {
         });
     }, [scriptWordsSet, script]);
 
-    const [fillerCounter, setFillerCounter] = useState(0);
-    if (effectiveFillerWords.includes(ALL_FILLER_WORDS)) {
-        setFillerCounter(prev => prev + 1);
-    }
-    
     // ===== START SESSION =====
     const startSession = () => {
         if (!script) {
@@ -398,7 +392,6 @@ function Session() {
         // Reset volume state
         setLiveVolume(0);
         setVolumeLabel("");
-        setVolumeHistory([]);
         volumeHistoryRef.current = [];
 
         if (scrollRef.current) {
@@ -456,7 +449,7 @@ function Session() {
             
             // Get current time
             const now = Date.now();
-            const secondsElapsed = Math.floor((now - startTimeRef.current) / 5000);
+            const secondsElapsed = Math.floor((now - startTimeRef.current) / 1000);
             
             // Add new words with timestamp to rolling window
             const newWords = wordsArray.slice(lastWordCountRef.current);
@@ -589,6 +582,10 @@ function Session() {
 
                 const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
+                // Rolling buffer for smoothing — last 15 samples (~750ms at 20fps)
+                const smoothingBuffer = [];
+                const SMOOTH_WINDOW = 15;
+
                 // Poll volume ~20x per second
                 const pollVolume = () => {
                     analyser.getByteFrequencyData(dataArray);
@@ -597,28 +594,34 @@ function Session() {
                     const sum = dataArray.reduce((acc, val) => acc + val * val, 0);
                     const rms = Math.sqrt(sum / dataArray.length);
 
-                    // Normalize to 0-100 (typical rms range ~0-100 for speech)
+                    // Normalize to 0-100
                     const normalized = Math.min(100, Math.round(rms));
 
-                    setLiveVolume(normalized);
-
-                    // Accumulate full session history for dashboard
+                    // Accumulate full session history for dashboard (raw)
                     volumeHistoryRef.current.push(normalized);
 
-                    // Volume label thresholds
-                    if (normalized < 40) {
+                    // Apply rolling average before thresholding and display
+                    smoothingBuffer.push(normalized);
+                    if (smoothingBuffer.length > SMOOTH_WINDOW) smoothingBuffer.shift();
+                    const smoothed = Math.round(
+                        smoothingBuffer.reduce((a, b) => a + b, 0) / smoothingBuffer.length
+                    );
+
+                    setLiveVolume(smoothed);
+
+                    // --- ALIGNED volume thresholds ---
+                    // Live loud threshold is slightly higher than dashboard (94 vs 90)
+                    // to account for residual smoothing difference between live and post-session
+                    const QUIET_THRESHOLD = 35;
+                    const LOUD_THRESHOLD  = 94;
+
+                    if (smoothed < QUIET_THRESHOLD) {
                         setVolumeLabel("Too Quiet");
-                    } else if (normalized > 250) {
+                    } else if (smoothed > LOUD_THRESHOLD) {
                         setVolumeLabel("Too Loud");
                     } else {
                         setVolumeLabel("Good");
                     }
-
-                    // Rolling history — keep last 60 samples (~3s at 20fps)
-                    setVolumeHistory(prev => {
-                        const next = [...prev, normalized];
-                        return next.length > 60 ? next.slice(next.length - 60) : next;
-                    });
 
                     volumeRafRef.current = requestAnimationFrame(pollVolume);
                 };
@@ -788,8 +791,8 @@ function Session() {
             // Volume analysis data for dashboard graph
             volume: {
                 history: volumeHistoryRef.current,
-                quietThreshold: 15,  // below this = Too Quiet
-                loudThreshold: 70,   // above this = Too Loud
+                quietThreshold: 35,
+                loudThreshold: 90,
                 sessionDuration: durationSeconds,
             },
 
@@ -798,6 +801,17 @@ function Session() {
             script,
         };
     };
+
+    // --- Volume icon helper ---
+    // Returns { icon, color } based on current volume level and label
+    const getVolumeIcon = () => {
+        if (!volumeLabel) return { icon: "bi-volume-mute-fill", color: "#64748b" };
+        if (volumeLabel === "Too Quiet") return { icon: "bi-volume-off-fill",  color: "#f59e0b" };
+        if (volumeLabel === "Too Loud")  return { icon: "bi-volume-up-fill",   color: "#ef4444" };
+        return                                  { icon: "bi-volume-down-fill", color: "#22c55e" };
+    };
+
+    const { icon: volIcon, color: volColor } = getVolumeIcon();
 
     return (
         <div className="py-5 p-5 body">
@@ -923,7 +937,7 @@ function Session() {
                             <div className="row g-3">
                                 
                                 {/* Word Count Display */}
-                                <div className="col-6">
+                                <div className="col-4">
                                     <div className="bg-dark rounded p-3">
                                         <div className="small text-white">Words Spoken</div>
                                         <div className="fs-2 fw-bold text-white">{wordCount}</div>
@@ -931,7 +945,7 @@ function Session() {
                                 </div>
                                 
                                 {/* Feedback Badge */}
-                                <div className="col-6">
+                                <div className="col-4">
                                     <div className="bg-dark rounded p-3 h-100 d-flex align-items-center justify-content-center">
                                         {liveFeedback ? (
                                             <span className={`badge fs-6 px-3 py-2 ${
@@ -945,43 +959,22 @@ function Session() {
                                         )}
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* LIVE VOLUME ANALYZER */}
-                            <div className="bg-dark rounded p-3 mt-3">
-                                <div className="d-flex justify-content-between align-items-center mb-2">
-                                    <span className="text-white small">
-                                        <i className="bi bi-volume-up me-1"></i>
-                                        Live Volume
-                                    </span>
-                                    {/* Volume label badge */}
-                                    {volumeLabel ? (
-                                        <span className={`badge ${
-                                            volumeLabel === "Good" ? "bg-success" :
-                                            volumeLabel === "Too Loud" ? "bg-danger" : "bg-warning text-dark"
-                                        }`}>
-                                            {volumeLabel}
+                                {/* LIVE VOLUME ICON */}
+                                <div className="col-4">
+                                    <div className="bg-dark rounded p-3 h-100 d-flex flex-column align-items-center justify-content-center gap-1">
+                                        <i
+                                            className={`bi ${volIcon}`}
+                                            style={{
+                                                fontSize: "2rem",
+                                                color: volColor,
+                                                transition: "color 0.2s ease",
+                                            }}
+                                        />
+                                        <span style={{ fontSize: "11px", color: volColor, transition: "color 0.2s ease" }}>
+                                            {volumeLabel || "—"}
                                         </span>
-                                    ) : (
-                                        <span className="text-muted small">Waiting...</span>
-                                    )}
-                                </div>
-
-                                {/* Volume meter bar */}
-                                <div style={{
-                                    height: "10px",
-                                    background: "rgba(255,255,255,0.08)",
-                                    borderRadius: "999px",
-                                    overflow: "hidden",
-                                    marginBottom: "10px",
-                                }}>
-                                    <div style={{
-                                        height: "100%",
-                                        width: `${liveVolume}%`,
-                                        borderRadius: "999px",
-                                        background: liveVolume > 70 ? "#ef4444" : liveVolume < 15 ? "#f59e0b" : "#22c55e",
-                                        transition: "width 0.08s ease-out, background 0.2s",
-                                    }} />
+                                    </div>
                                 </div>
                             </div>
                             
