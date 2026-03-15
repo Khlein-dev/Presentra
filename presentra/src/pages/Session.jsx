@@ -1,9 +1,25 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Holistic } from "@mediapipe/holistic";
 import * as cam from "@mediapipe/camera_utils";
 import Webcam from "react-webcam";
 import "../styles/Session.css";
+
+const ALL_FILLER_WORDS = [
+    "um",
+    "uh",
+    "like",
+    "ah",
+    "so",
+    "you know",
+    "actually",
+    "basically",
+    "literally",
+    "just",
+    "well",
+    "yeah",
+    "hmm",
+];
 
 // --- HOLISTIC TRACKER COMPONENT (Hands + Body + Face) ---
 const HandTracker = ({ onTrackingUpdate }) => {
@@ -888,122 +904,252 @@ const HandTracker = ({ onTrackingUpdate }) => {
     );
 };
 
+// -----------------------------
+// Main Session
+// -----------------------------
 function Session() {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const { script } = location.state || {};
+    const { script, memorizeMode: initialMemorizeMode = false } = location.state || {};
+    const [isMemorizeMode, setIsMemorizeMode] = useState(initialMemorizeMode);
 
-    // LIVE CONTROLS
-    const [fontSize, setFontSize] = useState(28);
+    const [fontSize, setFontSize] = useState(24);
     const [alignment, setAlignment] = useState("center");
-    const [speed, setSpeed] = useState(0.5); // Slower default
+    const [speed, setSpeed] = useState(0.55);
 
     const [isRunning, setIsRunning] = useState(false);
     const [transcript, setTranscript] = useState("");
     const [timer, setTimer] = useState(0);
-    const [eyeContact, setEyeContact] = useState(0);
-    const [facialExpressions, setFacialExpressions] = useState({
-        smile: 0,
-        frown: 0,
-        neutral: 0,
-        mad: 0
-    });
-    const [handMovements, setHandMovements] = useState({
-        handMoved: 0,
-        openHand: 0,
-        closeHand: 0,
-        sidewaysRight: 0,
-        sidewaysLeft: 0
-    });
+
+    const [liveWPM, setLiveWPM] = useState(0);
+    const [averageWPM, setAverageWPM] = useState(0);
+    const [liveFeedback, setLiveFeedback] = useState("");
+    const [wordCount, setWordCount] = useState(0);
+
+    const [liveVolume, setLiveVolume] = useState(0);
+    const [volumeLabel, setVolumeLabel] = useState("");
+
+
+    const [isScriptVisible, setIsScriptVisible] = useState(true);
+
+
 
     const recognitionRef = useRef(null);
     const scrollRef = useRef(null);
     const timerRef = useRef(null);
     const animationRef = useRef(null);
     const startTimeRef = useRef(null);
-    const gestureDebounceRef = useRef({
-        leftLastMovement: null,
-        rightLastMovement: null
-    });
-    const trackingDataRef = useRef({
-        eyeContactFrames: 0,
-        totalFrames: 0,
-        facialExpressions: { smile: 0, frown: 0, neutral: 0, mad: 0 },
-        handMovements: { handMoved: 0, openHand: 0, closeHand: 0, sidewaysRight: 0, sidewaysLeft: 0 }
-    });
 
-    // Handle tracking data from HandTracker
-    const handleTrackingUpdate = (trackingData) => {
-        if (!trackingDataRef.current) return;
+    const transcriptRef = useRef("");
+    const wordsSpokenRef = useRef([]);
+    const lastAnalysisTimeRef = useRef(null);
+    const lastWordCountRef = useRef(0);
+    const fillerTimelineRef = useRef([]);
 
-        trackingDataRef.current.totalFrames++;
+    const timerValueRef = useRef(0);
+    const averageWPMRef = useRef(0);
 
-        // Track eye contact
-        if (trackingData.eyeContact) {
-            trackingDataRef.current.eyeContactFrames++;
-        }
+    const audioContextRef = useRef(null);
+    const analyserRef = useRef(null);
+    const micStreamRef = useRef(null);
+    const volumeRafRef = useRef(null);
+    const volumeHistoryRef = useRef([]);
+    const hideScriptTimeoutRef = useRef(null);
 
-        // Track facial expressions
-        if (trackingData.facialExpression) {
-            trackingDataRef.current.facialExpressions[trackingData.facialExpression]++;
-        }
+    useEffect(() => {
+        timerValueRef.current = timer;
+    }, [timer]);
 
-        // Track hand movements - count each movement once when it happens
-        if (trackingData.leftHandMovement && trackingData.leftHandMovement !== gestureDebounceRef.current.leftLastMovement) {
-            // Movement detected on left hand, count it
-            if (trackingDataRef.current.handMovements[trackingData.leftHandMovement] !== undefined) {
-                trackingDataRef.current.handMovements[trackingData.leftHandMovement]++;
-                // Update UI immediately
-                setHandMovements({ ...trackingDataRef.current.handMovements });
+    useEffect(() => {
+        averageWPMRef.current = averageWPM;
+    }, [averageWPM]);
+
+    useEffect(() => {
+        return () => {
+            cancelAnimationFrame(animationRef.current);
+            cancelAnimationFrame(volumeRafRef.current);
+            clearInterval(timerRef.current);
+            clearTimeout(hideScriptTimeoutRef.current);
+
+            try {
+                recognitionRef.current?.stop?.();
+            } catch (err) {
+                console.error("Error stopping recognition:", err);
             }
-            gestureDebounceRef.current.leftLastMovement = trackingData.leftHandMovement;
-            console.log("Left movement:", trackingData.leftHandMovement, "Total movements:", Object.values(trackingDataRef.current.handMovements).reduce((a, b) => a + b, 0));
-        } else if (!trackingData.leftHandMovement) {
-            gestureDebounceRef.current.leftLastMovement = null;
-        }
 
-        if (trackingData.rightHandMovement && trackingData.rightHandMovement !== gestureDebounceRef.current.rightLastMovement) {
-            // Movement detected on right hand, count it
-            if (trackingDataRef.current.handMovements[trackingData.rightHandMovement] !== undefined) {
-                trackingDataRef.current.handMovements[trackingData.rightHandMovement]++;
-                // Update UI immediately
-                setHandMovements({ ...trackingDataRef.current.handMovements });
+            try {
+                micStreamRef.current?.getTracks()?.forEach((track) => track.stop());
+            } catch (err) {
+                console.error("Error stopping mic stream:", err);
             }
-            gestureDebounceRef.current.rightLastMovement = trackingData.rightHandMovement;
-            console.log("Right movement:", trackingData.rightHandMovement, "Total movements:", Object.values(trackingDataRef.current.handMovements).reduce((a, b) => a + b, 0));
-        } else if (!trackingData.rightHandMovement) {
-            gestureDebounceRef.current.rightLastMovement = null;
-        }
 
-        // Update UI state periodically (every 30 frames) for other metrics
-        if (trackingDataRef.current.totalFrames % 30 === 0) {
-            const eyeContactPercentage = Math.round(
-                (trackingDataRef.current.eyeContactFrames / trackingDataRef.current.totalFrames) * 100
-            );
-            setEyeContact(eyeContactPercentage);
-            setFacialExpressions({ ...trackingDataRef.current.facialExpressions });
+            try {
+                audioContextRef.current?.close?.();
+            } catch (err) {
+                console.error("Error closing audio context:", err);
+            }
+        };
+    }, []);
+
+    const scriptWordsSet = useMemo(() => {
+        if (!script) return new Set();
+        const words = script.toLowerCase().match(/\b\w+\b/g) || [];
+        return new Set(words);
+    }, [script]);
+
+    const effectiveFillerWords = useMemo(() => {
+        return ALL_FILLER_WORDS.filter((filler) => {
+            const parts = filler.split(" ");
+            if (parts.length > 1) {
+                return !script?.toLowerCase().includes(filler);
+            }
+            return !scriptWordsSet.has(filler);
+        });
+    }, [script, scriptWordsSet]);
+
+    const handleMemorizeModeSpeechActivity = () => {
+        if (!isMemorizeMode || !isRunning) return;
+
+        setIsScriptVisible(false);
+
+        clearTimeout(hideScriptTimeoutRef.current);
+        hideScriptTimeoutRef.current = setTimeout(() => {
+            setIsScriptVisible(true);
+        }, 1400);
+    };
+
+    const toggleMemorizeMode = () => {
+        setIsMemorizeMode((prev) => {
+            const next = !prev;
+
+            clearTimeout(hideScriptTimeoutRef.current);
+            setIsScriptVisible(true);
+
+            return next;
+        });
+    };
+
+    const startVolumeTracking = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: false,
+            });
+
+            micStreamRef.current = stream;
+
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            const audioCtx = new AudioCtx();
+            audioContextRef.current = audioCtx;
+
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.6;
+            analyserRef.current = analyser;
+
+            const source = audioCtx.createMediaStreamSource(stream);
+            source.connect(analyser);
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            const smoothingBuffer = [];
+            const SMOOTH_WINDOW = 15;
+
+            const pollVolume = () => {
+                analyser.getByteFrequencyData(dataArray);
+
+                const sum = dataArray.reduce((acc, val) => acc + val * val, 0);
+                const rms = Math.sqrt(sum / dataArray.length);
+                const normalized = Math.min(100, Math.round(rms));
+
+                volumeHistoryRef.current.push(normalized);
+
+                smoothingBuffer.push(normalized);
+                if (smoothingBuffer.length > SMOOTH_WINDOW) smoothingBuffer.shift();
+
+                const smoothed = Math.round(
+                    smoothingBuffer.reduce((acc, val) => acc + val, 0) /
+                    smoothingBuffer.length
+                );
+
+                setLiveVolume(smoothed);
+
+                const QUIET_THRESHOLD = 35;
+                const LOUD_THRESHOLD = 94;
+
+                if (smoothed < QUIET_THRESHOLD) {
+                    setVolumeLabel("Too Quiet");
+                } else if (smoothed > LOUD_THRESHOLD) {
+                    setVolumeLabel("Too Loud");
+                } else {
+                    setVolumeLabel("Good");
+                }
+
+                volumeRafRef.current = requestAnimationFrame(pollVolume);
+            };
+
+            volumeRafRef.current = requestAnimationFrame(pollVolume);
+        } catch (err) {
+            console.warn("Volume analyzer unavailable:", err);
         }
     };
-    const startSession = () => {
-        if (!script) {
+
+    const stopVolumeTracking = async () => {
+        cancelAnimationFrame(volumeRafRef.current);
+
+        try {
+            micStreamRef.current?.getTracks()?.forEach((track) => track.stop());
+        } catch (err) {
+            console.error("Error stopping mic stream:", err);
+        }
+
+        try {
+            await audioContextRef.current?.close?.();
+        } catch (err) {
+            console.error("Error closing audio context:", err);
+        }
+
+        micStreamRef.current = null;
+        audioContextRef.current = null;
+        analyserRef.current = null;
+    };
+
+    const startSession = async () => {
+        if (!script?.trim()) {
             alert("No script provided.");
             return;
         }
 
         if (!("webkitSpeechRecognition" in window)) {
-            alert("Speech Recognition not supported in this browser.");
+            alert("Speech Recognition is not supported in this browser.");
             return;
         }
 
         setTranscript("");
         setTimer(0);
+        setLiveWPM(0);
+        setAverageWPM(0);
+        setLiveFeedback("");
+        setWordCount(0);
+        setLiveVolume(0);
+        setVolumeLabel("");
+        setIsScriptVisible(true);
+
+        clearTimeout(hideScriptTimeoutRef.current);
+
+        transcriptRef.current = "";
+        wordsSpokenRef.current = [];
+        fillerTimelineRef.current = [];
+        volumeHistoryRef.current = [];
+
+        lastAnalysisTimeRef.current = Date.now();
+        lastWordCountRef.current = 0;
+        startTimeRef.current = Date.now();
 
         if (scrollRef.current) {
             scrollRef.current.scrollTop = 0;
         }
 
-        // TELEPROMPTER SCROLL
         const scroll = () => {
             if (!scrollRef.current) return;
 
@@ -1022,73 +1168,181 @@ function Session() {
 
         animationRef.current = requestAnimationFrame(scroll);
 
-        // SPEECH RECOGNITION
         const recognition = new window.webkitSpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
+        let sessionBaseTranscript = "";
+
+        recognition.onstart = () => {
+            sessionBaseTranscript = transcriptRef.current;
+        };
+
         recognition.onresult = (event) => {
-            let text = "";
-            for (let i = 0; i < event.results.length; i++) {
-                text += event.results[i][0].transcript + " ";
+            let sessionText = "";
+
+            for (let i = 0; i < event.results.length; i += 1) {
+                sessionText += `${event.results[i][0].transcript} `;
             }
+
+            const text = `${sessionBaseTranscript}${sessionText}`;
             setTranscript(text);
+            transcriptRef.current = text;
+
+            handleMemorizeModeSpeechActivity();
+
+            const currentTranscript = text.trim();
+            const wordsArray = currentTranscript.split(/\s+/).filter(Boolean);
+            const currentWordCount = wordsArray.length;
+            const now = Date.now();
+            const secondsElapsed = Math.floor((now - startTimeRef.current) / 1000);
+
+            const newWords = wordsArray.slice(lastWordCountRef.current);
+
+            newWords.forEach((word, newWordIdx) => {
+                wordsSpokenRef.current.push({ word, timestamp: now });
+
+                const lowerWord = word.toLowerCase().replace(/[^a-z]/g, "");
+                if (effectiveFillerWords.includes(lowerWord)) {
+                    const fillerGlobalIdx = lastWordCountRef.current + newWordIdx;
+                    const contextStart = Math.max(0, fillerGlobalIdx - 3);
+                    const contextEnd = Math.min(wordsArray.length, fillerGlobalIdx + 4);
+                    const contextWords = wordsArray.slice(contextStart, contextEnd);
+                    const fillerLocalIdx = fillerGlobalIdx - contextStart;
+
+                    contextWords[fillerLocalIdx] = `__${contextWords[fillerLocalIdx]}__`;
+
+                    fillerTimelineRef.current.push({
+                        word: lowerWord,
+                        secondsElapsed,
+                        snippet: contextWords.join(" "),
+                    });
+                }
+            });
+
+            const newChunk = newWords.join(" ").toLowerCase();
+            effectiveFillerWords.forEach((filler) => {
+                if (filler.includes(" ") && newChunk.includes(filler)) {
+                    const phraseLength = filler.split(" ").length;
+                    const phraseIdx = wordsArray.findLastIndex((_, i) => {
+                        return (
+                            wordsArray
+                                .slice(i, i + phraseLength)
+                                .join(" ")
+                                .toLowerCase() === filler
+                        );
+                    });
+
+                    if (phraseIdx >= 0) {
+                        const contextStart = Math.max(0, phraseIdx - 3);
+                        const contextEnd = Math.min(
+                            wordsArray.length,
+                            phraseIdx + phraseLength + 3
+                        );
+
+                        fillerTimelineRef.current.push({
+                            word: filler,
+                            secondsElapsed,
+                            isPhrase: true,
+                            snippet: wordsArray.slice(contextStart, contextEnd).join(" "),
+                        });
+                    }
+                }
+            });
+
+            lastWordCountRef.current = currentWordCount;
+
+            const WINDOW_SIZE_MS = 10000;
+            const windowStartTime = now - WINDOW_SIZE_MS;
+
+            const recentWords = wordsSpokenRef.current.filter(
+                (entry) => entry.timestamp >= windowStartTime
+            );
+            wordsSpokenRef.current = recentWords;
+
+            const recentWordCount = recentWords.length;
+            const windowDurationSeconds = 10;
+
+            let actualDuration = windowDurationSeconds;
+            if (recentWords.length > 0) {
+                const oldestTimestamp = recentWords[0].timestamp;
+                const elapsed = (now - oldestTimestamp) / 1000;
+                if (elapsed < windowDurationSeconds) actualDuration = elapsed || 1;
+            }
+
+            const calculatedWPM =
+                recentWordCount > 0
+                    ? Math.round((recentWordCount / actualDuration) * 60)
+                    : 0;
+
+            setLiveWPM(calculatedWPM);
+            setWordCount(currentWordCount);
+
+            const sessionElapsedMs = now - lastAnalysisTimeRef.current;
+            const sessionElapsedMinutes = sessionElapsedMs / 60000 || 1;
+            const avgWPM =
+                currentWordCount > 0
+                    ? Math.round(currentWordCount / sessionElapsedMinutes)
+                    : 0;
+
+            setAverageWPM(avgWPM);
+
+            const IDEAL_MIN_WPM = 90;
+            const IDEAL_MAX_WPM = 180;
+
+            if (calculatedWPM < IDEAL_MIN_WPM) {
+                setLiveFeedback("Too Slow");
+            } else if (calculatedWPM > IDEAL_MAX_WPM) {
+                setLiveFeedback("Too Fast");
+            } else {
+                setLiveFeedback("Good Pace");
+            }
+        };
+
+        recognition.onend = () => {
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.start();
+                } catch (err) {
+                    // silent restart attempt
+                }
+            }
+        };
+
+        recognition.onerror = (event) => {
+            if (event.error === "no-speech" || event.error === "aborted") return;
+            console.error("Speech recognition error:", event.error);
         };
 
         recognition.start();
         recognitionRef.current = recognition;
 
-        // TIMER
-        startTimeRef.current = Date.now();
         timerRef.current = setInterval(() => {
             setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
         }, 1000);
 
+        await startVolumeTracking();
         setIsRunning(true);
     };
 
-    // ===== STOP SESSION =====
-    const stopSession = () => {
-        cancelAnimationFrame(animationRef.current);
-        clearInterval(timerRef.current);
-
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
-        }
-
-        setIsRunning(false);
-
-        const results = analyzeSpeech();
-        navigate("/dashboard", { state: results });
-    };
-
-    // ===== ANALYSIS =====
-    const analyzeSpeech = () => {
-        const cleanTranscript = transcript.trim();
+    const analyzeSpeech = (finalTranscript, durationSeconds, fillerTimeline) => {
+        const cleanTranscript = (finalTranscript || "").trim();
         const wordsArray = cleanTranscript.split(/\s+/).filter(Boolean);
         const totalWords = wordsArray.length;
 
-        const durationSeconds = timer;
         const durationMinutes = durationSeconds / 60 || 1;
+        const wpm = totalWords > 0 ? Math.round(totalWords / durationMinutes) : 0;
 
-        const wpm = totalWords > 0
-            ? Math.round(totalWords / durationMinutes)
-            : 0;
-
-        // Ideal speaking range
         const IDEAL_MIN_WPM = 120;
         const IDEAL_MAX_WPM = 160;
 
-        // Filler words tracking
-        const fillerWords = ["um", "uh", "like", "ah", "so", "you know"];
         const fillerBreakdown = {};
-
         const lowerTranscript = cleanTranscript.toLowerCase();
         let fillerCount = 0;
 
-        fillerWords.forEach((word) => {
-            const regex = new RegExp("\\b" + word + "\\b", "g");
+        effectiveFillerWords.forEach((word) => {
+            const regex = new RegExp(`\\b${word.replace(" ", "\\s+")}\\b`, "g");
             const matches = lowerTranscript.match(regex);
             const count = matches ? matches.length : 0;
 
@@ -1098,42 +1352,27 @@ function Session() {
             }
         });
 
-        const fillerRate = totalWords > 0
-            ? ((fillerCount / totalWords) * 100).toFixed(1)
-            : 0;
+        const fillerRate =
+            totalWords > 0 ? ((fillerCount / totalWords) * 100).toFixed(1) : 0;
 
-        // ===== SCORING SYSTEM =====
-
-        // Fluency score (based on fillers)
         let fluencyScore = 100 - fillerCount * 3;
         if (fluencyScore < 0) fluencyScore = 0;
 
-        // Pace score
         let paceScore = 100;
-        if (wpm < IDEAL_MIN_WPM) {
-            paceScore -= 15;
-        } else if (wpm > IDEAL_MAX_WPM) {
-            paceScore -= 15;
-        }
+        if (wpm < IDEAL_MIN_WPM) paceScore -= 15;
+        else if (wpm > IDEAL_MAX_WPM) paceScore -= 15;
 
-        // Final weighted score
-        let overallScore = Math.round(
-            fluencyScore * 0.6 +
-            paceScore * 0.4
-        );
-
+        let overallScore = Math.round(fluencyScore * 0.6 + paceScore * 0.4);
         if (overallScore < 0) overallScore = 0;
         if (overallScore > 100) overallScore = 100;
 
-        // Performance Level
         let performanceLevel = "";
         if (overallScore >= 85) performanceLevel = "Excellent";
         else if (overallScore >= 70) performanceLevel = "Good";
         else if (overallScore >= 50) performanceLevel = "Needs Improvement";
         else performanceLevel = "Beginner";
 
-        // Feedback Messages
-        let feedback = [];
+        const feedback = [];
 
         if (fillerCount === 0) {
             feedback.push("Excellent clarity with zero filler words.");
@@ -1151,222 +1390,366 @@ function Session() {
             feedback.push("Great pacing within ideal speaking range.");
         }
 
+        const cleanedTimeline = fillerTimeline.filter((entry) => {
+            if (entry.isPhrase) return true;
+            return !entry.word.includes(" ");
+        });
+
         return {
             summary: {
                 durationSeconds,
-                durationFormatted: `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`,
+                durationFormatted: `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60
+                    }s`,
                 totalWords,
                 wpm,
             },
-
             fluency: {
                 fillerCount,
                 fillerRate: Number(fillerRate),
                 fillerBreakdown,
                 fluencyScore,
+                fillerTimeline: cleanedTimeline,
+                sessionDuration: durationSeconds,
+                excludedFillers: ALL_FILLER_WORDS.filter(
+                    (filler) => !effectiveFillerWords.includes(filler)
+                ),
             },
-
             pacing: {
                 wpm,
                 idealRange: `${IDEAL_MIN_WPM}-${IDEAL_MAX_WPM} WPM`,
                 paceScore,
             },
-
-            eyeContact: {
-                percentage: eyeContact,
-                score: eyeContact >= 70 ? 100 : eyeContact >= 50 ? 75 : 50,
-                feedback: eyeContact >= 70 
-                    ? "Great eye contact maintained throughout!" 
-                    : eyeContact >= 50 
-                    ? "Good eye contact, but could look at camera more."
-                    : "Work on maintaining more eye contact with the camera."
-            },
-
-            facialExpressions: {
-                smile: facialExpressions.smile,
-                neutral: facialExpressions.neutral,
-                serious: facialExpressions.serious,
-                dominantExpression: Object.keys(facialExpressions).reduce((a, b) => 
-                    facialExpressions[a] > facialExpressions[b] ? a : b
-                ),
-                feedback: facialExpressions.smile > (facialExpressions.neutral + facialExpressions.serious) / 2
-                    ? "Good use of facial expressions! Keep smiling to engage your audience."
-                    : "Try to incorporate more facial expressions to keep your presentation engaging."
-            },
-
-            handMovements: {
-                handMoved: handMovements.handMoved,
-                openHand: handMovements.openHand,
-                closeHand: handMovements.closeHand,
-                totalMovements: Object.values(handMovements).reduce((a, b) => a + b, 0),
-                feedback: Object.values(handMovements).reduce((a, b) => a + b, 0) > 10
-                    ? "Excellent hand movement and gesticulation throughout your presentation!"
-                    : Object.values(handMovements).reduce((a, b) => a + b, 0) > 5
-                    ? "Good use of hand movements. You could use more to emphasize key points."
-                    : "Consider using more hand movements to emphasize important points."
-            },
-
             overall: {
                 overallScore,
                 performanceLevel,
             },
-
+            volume: {
+                history: volumeHistoryRef.current,
+                quietThreshold: 35,
+                loudThreshold: 90,
+                sessionDuration: durationSeconds,
+            },
             feedback,
+            transcript: cleanTranscript,
+            script,
         };
     };
 
+    const stopSession = async () => {
+        cancelAnimationFrame(animationRef.current);
+        clearInterval(timerRef.current);
+        clearTimeout(hideScriptTimeoutRef.current);
+
+        await stopVolumeTracking();
+
+        setIsRunning(false);
+        setIsScriptVisible(true);
+
+        const stoppedRecognition = recognitionRef.current;
+        recognitionRef.current = null;
+
+        if (stoppedRecognition) {
+            try {
+                stoppedRecognition.stop();
+            } catch (err) {
+                console.error("Error stopping recognition:", err);
+            }
+        }
+
+        const results = analyzeSpeech(
+            transcriptRef.current,
+            timerValueRef.current,
+            fillerTimelineRef.current
+        );
+
+        results.summary.averageWPM = averageWPMRef.current;
+
+        navigate("/dashboard", { state: results });
+    };
+
+    const getVolumeIcon = () => {
+        if (!volumeLabel) {
+            return { icon: "bi-volume-mute-fill", colorClass: "metric-neutral" };
+        }
+        if (volumeLabel === "Too Quiet") {
+            return { icon: "bi-volume-off-fill", colorClass: "metric-warning" };
+        }
+        if (volumeLabel === "Too Loud") {
+            return { icon: "bi-volume-up-fill", colorClass: "metric-danger" };
+        }
+        return { icon: "bi-volume-down-fill", colorClass: "metric-good" };
+    };
+
+    const getFeedbackClass = () => {
+        if (liveFeedback === "Good Pace") return "status-good";
+        if (liveFeedback === "Too Fast") return "status-danger";
+        if (liveFeedback === "Too Slow") return "status-warning";
+        return "status-neutral";
+    };
+
+    const { icon: volIcon, colorClass: volColorClass } = getVolumeIcon();
+
     return (
-        <div className="py-5 p-5 body">
+        <div className="session-page">
+            <div className="session-bg-glow session-bg-glow-1"></div>
+            <div className="session-bg-glow session-bg-glow-2"></div>
 
-            <div className="text-center mb-4">
-                <h2 className="fw-bold text-white">
-                    <i className="bi bi-mic-fill text-white me-2"></i>
-                    Live Speech Session
-                </h2>
-                <p className="text-secondary">Practice your delivery in real time</p>
-            </div>
+            <div className="session-shell">
+                <div className="session-header reveal-session">
+                    <div className="session-badge">
+                        <i className="bi bi-mic-fill"></i>
+                        <span>Live Practice Mode</span>
+                    </div>
 
-            <div className="row g-4">
+                    <h1 className="session-title">Live Speech Session</h1>
 
-                {/* LEFT: CONTROLS */}
-                <div className="col-lg-4 teleprompter-controls">
-                    <div className="card shadow-sm">
-                        <div className="card-body">
-                            <h5 className="card-title mb-4 text-white">
-                                <i className="bi bi-sliders me-2 text-white"></i>
+                    <p className="session-subtitle">
+                        Practice your delivery in real time with pacing, transcript,
+                        volume, and body tracking.
+                    </p>
+                </div>
+
+                <div className="session-bento">
+                    <section className="session-panel controls-panel reveal-session reveal-delay-1">
+                        <div className="panel-header">
+                            <h5>
+                                <i className="bi bi-sliders2"></i>
                                 Live Controls
                             </h5>
+                        </div>
 
-                            {/* Font Size */}
-                            <div className="mb-4">
-                                <label className="form-label text-white">
-                                    <i className="bi bi-fonts me-2 text-white"></i>
-                                    Font Size ({fontSize}px)
-                                </label>
-                                <input
-                                    type="range"
-                                    className="form-range"
-                                    min="18"
-                                    max="60"
-                                    value={fontSize}
-                                    onChange={(e) => setFontSize(Number(e.target.value))}
-                                />
-                            </div>
+                        <div className="control-group">
+                            <label className="control-label">
+                                <span>
+                                    <i className="bi bi-fonts"></i>
+                                    Font Size
+                                </span>
+                                <strong>{fontSize}px</strong>
+                            </label>
+                            <input
+                                type="range"
+                                className="form-range session-range"
+                                min="18"
+                                max="48"
+                                value={fontSize}
+                                onChange={(e) => setFontSize(Number(e.target.value))}
+                            />
+                        </div>
 
-                            {/* Scroll Speed */}
-                            <div className="mb-4">
-                                <label className="form-label text-white">
-                                    <i className="bi bi-speedometer2 me-2 text-white"></i>
-                                    Scroll Speed ({speed.toFixed(2)})
-                                </label>
-                                <input
-                                    type="range"
-                                    className="form-range"
-                                    min="0.2"
-                                    max="2"
-                                    step="0.1"
-                                    value={speed}
-                                    onChange={(e) => setSpeed(Number(e.target.value))}
-                                />
-                            </div>
+                        <div className="control-group">
+                            <label className="control-label">
+                                <span>
+                                    <i className="bi bi-speedometer2"></i>
+                                    Scroll Speed
+                                </span>
+                                <strong>{speed.toFixed(2)}</strong>
+                            </label>
+                            <input
+                                type="range"
+                                className="form-range session-range"
+                                min="0.2"
+                                max="2"
+                                step="0.1"
+                                value={speed}
+                                onChange={(e) => setSpeed(Number(e.target.value))}
+                            />
+                        </div>
 
-                            {/* Alignment */}
-                            <div className="mb-4">
-                                <label className="form-label text-white">
-                                    <i className="bi bi-text-left me-2 text-white"></i>
+                        <div className="control-group">
+                            <label className="control-label">
+                                <span>
+                                    <i className="bi bi-text-center"></i>
                                     Alignment
-                                </label>
-                                <select
-                                    className="form-select"
-                                    value={alignment}
-                                    onChange={(e) => setAlignment(e.target.value)}
-                                >
-                                    <option value="left">Left</option>
-                                    <option value="center">Center</option>
-                                    <option value="right">Right</option>
-                                </select>
+                                </span>
+                            </label>
+
+                            <select
+                                className="form-select session-select"
+                                value={alignment}
+                                onChange={(e) => setAlignment(e.target.value)}
+                            >
+                                <option value="left">Left</option>
+                                <option value="center">Center</option>
+                                <option value="right">Right</option>
+                            </select>
+                        </div>
+
+                        <div className="session-timer-tile">
+                            <div className="timer-icon">
+                                <i className="bi bi-clock-history"></i>
                             </div>
 
-                            {/* Timer */}
-                            <div className="alert alert-dark text-center">
-                                <i className="bi bi-clock me-2 text-white"></i>
-                                {timer}s
+                            <div>
+                                <small>Session Timer</small>
+                                <div>{timer}s</div>
                             </div>
+                        </div>
 
-                            {/* Start / Stop */}
+                        <div className="session-action-row">
                             {!isRunning ? (
-                                <button
-                                    className="btn btn-success w-100"
-                                    onClick={startSession}
-                                >
-                                    <i className="bi bi-play-fill me-2"></i>
-                                    Start Session
+                                <button className="session-btn start-btn" onClick={startSession}>
+                                    <i className="bi bi-play-fill"></i>
+                                    <span>Start Session</span>
                                 </button>
                             ) : (
-                                <button
-                                    className="btn btn-danger w-100"
-                                    onClick={stopSession}
-                                >
-                                    <i className="bi bi-stop-fill me-2"></i>
-                                    Stop Session
+                                <button className="session-btn stop-btn" onClick={stopSession}>
+                                    <i className="bi bi-stop-fill"></i>
+                                    <span>Stop Session</span>
                                 </button>
                             )}
-                        </div>
-                    </div>
 
-                    {/* WEBCAM FEED */}
-                    <div className="card shadow-sm mt-4">
-                        <div className="card-body">
-                            <h5 className="card-title mb-3 text-white">
-                                <i className="bi bi-camera-video me-2"></i>
-                                Webcam Feed
-                            </h5>
-                            <HandTracker onTrackingUpdate={handleTrackingUpdate} />
-                            
-                            {/* Facial Expressions & Gestures Indicator */}
-                            <div className="mt-3" style={{ fontSize: "12px", color: "#aaa" }}>
-                                <div>👁️ Eye Contact: {eyeContact}%</div>
-                                <div>😊 Expression: {Object.keys(facialExpressions).reduce((a, b) => 
-                                    facialExpressions[a] > facialExpressions[b] ? a : b
-                                )}</div>
-                                <div>👆 Hand Movements: {Object.values(handMovements).reduce((a, b) => a + b, 0)}</div>
+                            <div className="session-tooltip-wrap">
+                                <button
+                                    type="button"
+                                    className={`session-btn memorize-btn ${isMemorizeMode ? "active" : ""
+                                        }`}
+                                    onClick={toggleMemorizeMode}
+                                    title="Memorize mode hides the script while you are speaking and shows it again when you are quiet."
+                                    aria-label="Toggle memorize mode"
+                                >
+                                    <i
+                                        className={`bi ${isMemorizeMode
+                                                ? isScriptVisible
+                                                    ? "bi-eye-fill"
+                                                    : "bi-eye-slash-fill"
+                                                : "bi-journal-check"
+                                            }`}
+                                    ></i>
+                                    <span>Memorize</span>
+                                </button>
+
+                                <span className="session-hover-text">
+                                    It hides the script while you speak, then shows it again
+                                    when you become quiet.
+                                </span>
                             </div>
                         </div>
-                    </div>
-                </div>
+                    </section>
 
-                {/* RIGHT: TELEPROMPTER */}
-                <div className="col-lg-8">
-                    <div className="card shadow-sm">
+                    <section
+                        className={`session-panel analysis-panel ${getFeedbackClass()} reveal-session`}
+                    >
+                        <div className="panel-header">
+                            <h5>
+                                <i className="bi bi-activity"></i>
+                                Live Speech Analysis
+                            </h5>
+                        </div>
+
+                        <div className="analysis-grid">
+                            <div className="metric-card">
+                                <span className="metric-label">Words Spoken</span>
+                                <strong className="metric-value">{wordCount}</strong>
+                                <small className="metric-sub">Running total</small>
+                            </div>
+
+                            <div className="metric-card">
+                                <span className="metric-label">Live WPM</span>
+                                <strong className="metric-value">{liveWPM}</strong>
+                                <small className="metric-sub">Last 10 seconds</small>
+                            </div>
+
+                            <div className="metric-card">
+                                <span className="metric-label">Average WPM</span>
+                                <strong className="metric-value">{averageWPM}</strong>
+                                <small className="metric-sub">Whole session</small>
+                            </div>
+
+                            <div className="metric-card">
+                                <span className="metric-label">Pacing</span>
+                                <div className={`metric-pill ${getFeedbackClass()}`}>
+                                    {liveFeedback || "Waiting"}
+                                </div>
+                                <small className="metric-sub">Ideal: 90–160 WPM</small>
+                            </div>
+
+                            <div className="metric-card">
+                                <span className="metric-label">Volume</span>
+                                <div className={`volume-display ${volColorClass}`}>
+                                    <i className={`bi ${volIcon}`}></i>
+                                    <span>{volumeLabel || "—"}</span>
+                                </div>
+                                <small className="metric-sub">{liveVolume}/100</small>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="session-panel teleprompter-panel reveal-session reveal-delay-1">
+                        <div className="panel-header teleprompter-header">
+                            <h5>
+                                <i className="bi bi-file-earmark-text-fill"></i>
+                                Teleprompter
+                            </h5>
+
+                            <div className="teleprompter-mini-stats">
+                                <span>
+                                    <i className="bi bi-type"></i>
+                                    {fontSize}px
+                                </span>
+                                <span>
+                                    <i className="bi bi-arrow-down-up"></i>
+                                    {speed.toFixed(1)}
+                                </span>
+                                {isMemorizeMode ? (
+                                    <span>
+                                        <i
+                                            className={`bi ${isScriptVisible
+                                                    ? "bi-eye-fill"
+                                                    : "bi-eye-slash-fill"
+                                                }`}
+                                        ></i>
+                                        {isScriptVisible ? "Visible" : "Hidden"}
+                                    </span>
+                                ) : null}
+                            </div>
+                        </div>
+
                         <div
                             ref={scrollRef}
-                            className="card-body bg-black text-white"
+                            className={`teleprompter-body ${isMemorizeMode && !isScriptVisible ? "teleprompter-hidden" : ""
+                                }`}
                             style={{
-                                height: "400px",
-                                overflow: "hidden",
-                                fontSize: fontSize,
+                                fontSize: `${fontSize}px`,
                                 textAlign: alignment,
-                                lineHeight: "1.6",
                             }}
                         >
-                            <div style={{ paddingBottom: "600px" }}>
-                                {script}
+                            <div className="teleprompter-content">
+                                {isMemorizeMode && !isScriptVisible
+                                    ? "Memorize mode is active. Keep speaking from memory."
+                                    : script || "No script loaded."}
                             </div>
                         </div>
-                    </div>
+                    </section>
 
-                    {/* Transcript */}
-                    <div className="card mt-4 shadow-sm">
-                        <div className="card-body">
+                    <section className="session-panel tracker-panel reveal-session reveal-delay-2">
+                        <div className="panel-header">
                             <h5>
-                                <i className="bi bi-chat-dots me-2"></i>
+                                <i className="bi bi-camera-video-fill"></i>
+                                Webcam Feed
+                            </h5>
+                        </div>
+                        <HandTracker />
+                    </section>
+
+                    <section className="session-panel transcript-panel reveal-session reveal-delay-2">
+                        <div className="panel-header">
+                            <h5>
+                                <i className="bi bi-chat-dots-fill"></i>
                                 Live Transcript
                             </h5>
-                            <p className="text-muted">{transcript}</p>
                         </div>
-                    </div>
-                </div>
 
+                        <div className="transcript-body">
+                            {transcript ? (
+                                <p>{transcript}</p>
+                            ) : (
+                                <p className="transcript-placeholder">
+                                    Your live transcript will appear here once the session starts.
+                                </p>
+                            )}
+                        </div>
+                    </section>
+                </div>
             </div>
         </div>
     );
