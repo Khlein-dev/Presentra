@@ -1,0 +1,128 @@
+.footer {
+    background: linear-gradient(180deg,#07101c,#050a14);
+    color: #dbe6ff;
+    padding-top: 60px;
+    padding-bottom: 25px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-family: "Inter", sans-serif;
+}
+
+/* grid spacing */
+
+.footer-grid{
+    margin-bottom:40px;
+}
+
+/* brand */
+
+.footer-logo{
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing:-0.02em;
+}
+
+.footer-brand p{
+    color:#94a6c4;
+    line-height:1.7;
+}
+
+/* links */
+
+.footer-links h6,
+.footer-contact h6{
+    font-weight:700;
+    margin-bottom:15px;
+    text-transform:uppercase;
+    font-size:0.8rem;
+    letter-spacing:0.08em;
+    color:#ffffff;
+}
+
+.footer-links ul{
+    list-style:none;
+    padding:0;
+    margin:0;
+}
+
+.footer-links li{
+    margin-bottom:10px;
+    color:#9fb0cc;
+}
+
+.footer-links a{
+    color:#9fb0cc;
+    text-decoration:none;
+    position:relative;
+    transition:color .25s ease;
+}
+
+.footer-links a::after{
+    content:"";
+    position:absolute;
+    left:0;
+    bottom:-3px;
+    width:0;
+    height:2px;
+    background:linear-gradient(90deg,#7c5cff,#00c2ff);
+    transition:width .25s ease;
+}
+
+.footer-links a:hover{
+    color:#ffffff;
+}
+
+.footer-links a:hover::after{
+    width:100%;
+}
+
+/* contact */
+
+.footer-contact p{
+    color:#9fb0cc;
+    margin-bottom:6px;
+}
+
+/* socials */
+
+.footer-socials{
+    margin-top:10px;
+    display:flex;
+    gap:14px;
+}
+
+.footer-socials a{
+    font-size:1.2rem;
+    color:#9fb0cc;
+    transition:all .25s ease;
+}
+
+.footer-socials a:hover{
+    color:#7c5cff;
+    transform:translateY(-2px);
+}
+
+/* bottom */
+
+.footer-bottom{
+    border-top:1px solid rgba(255,255,255,0.08);
+    padding-top:18px;
+    text-align:center;
+    color:#7f93b5;
+    font-size:.9rem;
+}
+
+/* responsive */
+
+@media (max-width:768px){
+
+.footer-grid{
+    text-align:center;
+}
+
+.footer-socials{
+    justify-content:center;
+}
+
+}
