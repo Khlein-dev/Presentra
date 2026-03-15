@@ -22,7 +22,7 @@ const ALL_FILLER_WORDS = [
 ];
 
 // --- HOLISTIC TRACKER COMPONENT (Hands + Body + Face) ---
-const HandTracker = ({ onTrackingUpdate }) => {
+const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
     const webcamRef = useRef(null);
     const canvasRef = useRef(null);
     const [error, setError] = useState(null);
@@ -369,6 +369,58 @@ const HandTracker = ({ onTrackingUpdate }) => {
         return result.contact;
     };
 
+    // Cleanup function that can be called from parent
+    const cleanupCamera = async () => {
+        console.log("Cleaning up camera and holistic from stopSession...");
+        
+        // IMPORTANT: Stop camera FIRST before closing holistic
+        // This prevents "Cannot pass deleted object" error
+        
+        // Stop webcam tracks
+        if (webcamRef.current?.video?.srcObject) {
+            try {
+                const tracks = webcamRef.current.video.srcObject.getTracks();
+                tracks.forEach(track => {
+                    track.stop();
+                    console.log("Webcam track stopped");
+                });
+            } catch (err) {
+                console.error("Error stopping webcam tracks:", err);
+            }
+        }
+
+        // Stop camera BEFORE closing holistic
+        if (cameraRef.current) {
+            try {
+                cameraRef.current.stop?.();
+                console.log("Camera stopped");
+            } catch (err) {
+                console.error("Error stopping camera:", err);
+            }
+        }
+
+        // Add small delay to ensure camera has stopped
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // THEN close holistic (after camera has stopped sending frames)
+        if (holisticRef.current) {
+            try {
+                holisticRef.current.close?.();
+                console.log("Holistic closed");
+                holisticRef.current = null;
+            } catch (err) {
+                console.error("Error closing holistic:", err);
+            }
+        }
+    };
+
+    // Expose cleanup function to parent component
+    useEffect(() => {
+        if (onCleanup) {
+            onCleanup(cleanupCamera);
+        }
+    }, [onCleanup]);
+
     // Cleanup on unmount
     useEffect(() => {
         const camera = cameraRef.current;
@@ -376,9 +428,22 @@ const HandTracker = ({ onTrackingUpdate }) => {
         const webcam = webcamRef.current;
 
         return () => {
-            console.log("Cleaning up camera and holistic...");
+            console.log("Cleaning up camera and holistic on unmount...");
             
-            // Stop camera
+            // IMPORTANT: Stop webcam tracks FIRST
+            if (webcam?.video?.srcObject) {
+                try {
+                    const tracks = webcam.video.srcObject.getTracks();
+                    tracks.forEach(track => {
+                        track.stop();
+                        console.log("Webcam track stopped");
+                    });
+                } catch (err) {
+                    console.error("Error stopping webcam tracks:", err);
+                }
+            }
+
+            // Stop camera BEFORE closing holistic
             if (camera) {
                 try {
                     camera.stop?.();
@@ -388,7 +453,7 @@ const HandTracker = ({ onTrackingUpdate }) => {
                 }
             }
 
-            // Close holistic
+            // THEN close holistic (after camera has stopped)
             if (holistic) {
                 try {
                     holistic.close?.();
@@ -396,15 +461,6 @@ const HandTracker = ({ onTrackingUpdate }) => {
                 } catch (err) {
                     console.error("Error closing holistic:", err);
                 }
-            }
-
-            // Stop webcam tracks
-            if (webcam?.video?.srcObject) {
-                const tracks = webcam.video.srcObject.getTracks();
-                tracks.forEach(track => {
-                    track.stop();
-                    console.log("Webcam track stopped");
-                });
             }
         };
     }, []);
@@ -768,61 +824,25 @@ const HandTracker = ({ onTrackingUpdate }) => {
                         canvasCtx.fillText(`Mouth: ${(mouthOpenness * 100).toFixed(1)}%`, 10, videoHeight - 20);
                     }
 
-                    // Draw iris centers for eye tracking visualization
-                    const leftIrisCenter = faceLandmarks[468];
-                    const rightIrisCenter = faceLandmarks[473];
-                    
-                    if (leftIrisCenter && rightIrisCenter) {
-                        // Draw iris circles
-                        canvasCtx.strokeStyle = "#00FFFF";
-                        canvasCtx.lineWidth = 2;
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(leftIrisCenter.x * videoWidth, leftIrisCenter.y * videoHeight, 8, 0, 2 * Math.PI);
-                        canvasCtx.stroke();
-                        
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(rightIrisCenter.x * videoWidth, rightIrisCenter.y * videoHeight, 8, 0, 2 * Math.PI);
-                        canvasCtx.stroke();
+                    // Hide iris centers, mouth points, eyebrow points - user only visible
+                    // All detection still works, just not displayed
 
-                        // Draw center reference line for eye contact
-                        canvasCtx.strokeStyle = "#00FF00";
-                        canvasCtx.lineWidth = 1;
-                        canvasCtx.setLineDash([5, 5]);
-                        const eyeCenterY = (leftIrisCenter.y + rightIrisCenter.y) / 2;
-                        canvasCtx.beginPath();
-                        canvasCtx.moveTo(0, eyeCenterY * videoHeight);
-                        canvasCtx.lineTo(videoWidth, eyeCenterY * videoHeight);
-                        canvasCtx.stroke();
-                        canvasCtx.setLineDash([]);
-                    }
+                    // // Draw iris centers for eye tracking visualization (HIDDEN)
+                    // const leftIrisCenter = faceLandmarks[468];
+                    // const rightIrisCenter = faceLandmarks[473];
+                    // 
+                    // if (leftIrisCenter && rightIrisCenter) {
+                    //     // Draw iris circles (HIDDEN)
+                    //     // Draw center reference line (HIDDEN)
+                    // }
 
-                    // Draw mouth reference points
-                    const mouthLeft = faceLandmarks[61];
-                    const mouthRight = faceLandmarks[291];
-                    if (mouthLeft && mouthRight) {
-                        canvasCtx.fillStyle = "#FF00FF";
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(mouthLeft.x * videoWidth, mouthLeft.y * videoHeight, 3, 0, 2 * Math.PI);
-                        canvasCtx.fill();
-                        
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(mouthRight.x * videoWidth, mouthRight.y * videoHeight, 3, 0, 2 * Math.PI);
-                        canvasCtx.fill();
-                    }
+                    // // Draw mouth reference points (HIDDEN)
+                    // const mouthLeft = faceLandmarks[61];
+                    // const mouthRight = faceLandmarks[291];
 
-                    // Draw eyebrow inner points for mad detection
-                    const leftEyebrowInner = faceLandmarks[105];
-                    const rightEyebrowInner = faceLandmarks[334];
-                    if (leftEyebrowInner && rightEyebrowInner) {
-                        canvasCtx.fillStyle = "#00FFFF";
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(leftEyebrowInner.x * videoWidth, leftEyebrowInner.y * videoHeight, 2, 0, 2 * Math.PI);
-                        canvasCtx.fill();
-                        
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(rightEyebrowInner.x * videoWidth, rightEyebrowInner.y * videoHeight, 2, 0, 2 * Math.PI);
-                        canvasCtx.fill();
-                    }
+                    // // Draw eyebrow inner points for mad detection (HIDDEN)
+                    // const leftEyebrowInner = faceLandmarks[105];
+                    // const rightEyebrowInner = faceLandmarks[334];
                 }
             });
 
@@ -940,6 +960,7 @@ function Session() {
     const timerRef = useRef(null);
     const animationRef = useRef(null);
     const startTimeRef = useRef(null);
+    const cameraCleanupRef = useRef(null); // Camera cleanup callback from HandTracker
 
     const transcriptRef = useRef("");
     const wordsSpokenRef = useRef([]);
@@ -1436,9 +1457,15 @@ function Session() {
     };
 
     const stopSession = async () => {
+        // Stop animation frames and timers
         cancelAnimationFrame(animationRef.current);
         clearInterval(timerRef.current);
         clearTimeout(hideScriptTimeoutRef.current);
+
+        // Call camera cleanup from HandTracker and wait for it to complete
+        if (cameraCleanupRef.current) {
+            await cameraCleanupRef.current();
+        }
 
         await stopVolumeTracking();
 
@@ -1728,7 +1755,7 @@ function Session() {
                                 Webcam Feed
                             </h5>
                         </div>
-                        <HandTracker />
+                        <HandTracker onCleanup={(cleanup) => { cameraCleanupRef.current = cleanup; }} />
                     </section>
 
                     <section className="session-panel transcript-panel reveal-session reveal-delay-2">
