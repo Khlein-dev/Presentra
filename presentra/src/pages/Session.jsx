@@ -21,107 +21,419 @@ const ALL_FILLER_WORDS = [
     "hmm",
 ];
 
-// -----------------------------
-// Hand / Body / Face Tracker
-// -----------------------------
-const HandTracker = () => {
+// --- HOLISTIC TRACKER COMPONENT (Hands + Body + Face) ---
+const HandTracker = ({ onTrackingUpdate }) => {
     const webcamRef = useRef(null);
     const canvasRef = useRef(null);
+    const [error, setError] = useState(null);
     const holisticRef = useRef(null);
     const cameraRef = useRef(null);
-    const [error, setError] = useState("");
+    
+    // Track hand positions for movement detection
+    const handPosRef = useRef({
+        leftHand: { x: null, y: null, orientation: null, fingerSpread: null },
+        rightHand: { x: null, y: null, orientation: null, fingerSpread: null }
+    });
 
-    useEffect(() => {
-        return () => {
-            try {
-                cameraRef.current?.stop?.();
-            } catch (err) {
-                console.error("Error stopping camera:", err);
+    // Comprehensive facial reference points based on MediaPipe standards
+    const FACIAL_REFERENCE_POINTS = {
+        // Mouth reference points
+        mouth: {
+            // Corners (61, 291), top (13), bottom (14)
+            // For smile: corners rise, mouth opens slightly
+            smileCornerRise: 0.015, // Corners should be above center by this amount
+            smileMouthOpen: { min: 0.02, max: 0.08 }, // Mouth openness range
+            smileMouthWidth: 0.15, // Minimum mouth width for smile
+            
+            // For frown: corners drop, mouth slightly open
+            frownCornerDrop: -0.015, // Corners should be below center
+            frownMouthOpen: { min: 0.01, max: 0.06 },
+            
+            // For neutral: closed mouth, no corner movement
+            neutralMouthOpen: { max: 0.02 },
+        },
+
+        // Eyebrow reference points
+        eyebrows: {
+            // Inner points (105 left, 334 right), outer points (107 left, 336 right)
+            // For angry/mad: eyebrows down, angled inward
+            madAngleRange: { min: -70, max: 0 }, // Downward slant
+            madDistance: 0.2, // Inner points close together
+            madEyebrowDrop: 0.02, // Drop below reference height
+            
+            // For normal: eyebrows relatively straight
+            normalAngleRange: { min: -10, max: 10 },
+            normalDistance: 0.25, // Normal spacing
+        },
+
+        // Eye reference points
+        eyes: {
+            // Iris centers (468 left, 473 right)
+            // For eye contact: both irises centered horizontally in face
+            eyeContactCenterX: 0.5, // Face center
+            eyeContactThreshold: 0.2, // ±20% tolerance
+            
+            // Eye width landmarks (33, 362 outer; 133, 263 inner)
+            eyeOpenness: { min: 0.08, max: 0.4 }, // Eye height range
+            eyeSymmetry: 0.1, // Max difference between left and right
+            
+            // For looking left/right, eyes move horizontally
+            eyeLookLeftThreshold: 0.35, // Left iris X position
+            eyeLookRightThreshold: 0.65, // Right iris X position
+        }
+    };
+
+    // Detect eye contact and gaze direction with reference points
+    const detectEyeContactAdvanced = (faceLandmarks) => {
+        if (!faceLandmarks || faceLandmarks.length < 478) return { contact: false, gaze: "center" };
+
+        // Get iris centers
+        const leftIrisCenter = faceLandmarks[468];
+        const rightIrisCenter = faceLandmarks[473];
+
+        if (!leftIrisCenter || !rightIrisCenter) return { contact: false, gaze: "center" };
+
+        // Calculate eye openness (distance between top and bottom)
+        const leftEyeTop = faceLandmarks[159];
+        const leftEyeBottom = faceLandmarks[145];
+        const rightEyeTop = faceLandmarks[386];
+        const rightEyeBottom = faceLandmarks[374];
+
+        let leftEyeOpen = 0.15;
+        let rightEyeOpen = 0.15;
+        
+        if (leftEyeTop && leftEyeBottom) {
+            leftEyeOpen = Math.abs(leftEyeTop.y - leftEyeBottom.y);
+        }
+        if (rightEyeTop && rightEyeBottom) {
+            rightEyeOpen = Math.abs(rightEyeTop.y - rightEyeBottom.y);
+        }
+
+        // Check if eyes are open (within normal range)
+        const eyesOpen = 
+            leftEyeOpen > FACIAL_REFERENCE_POINTS.eyes.eyeOpenness.min &&
+            leftEyeOpen < FACIAL_REFERENCE_POINTS.eyes.eyeOpenness.max &&
+            rightEyeOpen > FACIAL_REFERENCE_POINTS.eyes.eyeOpenness.min &&
+            rightEyeOpen < FACIAL_REFERENCE_POINTS.eyes.eyeOpenness.max;
+
+        // Calculate iris centers
+        const leftIrisX = leftIrisCenter.x;
+        const rightIrisX = rightIrisCenter.x;
+        const avgIrisX = (leftIrisX + rightIrisX) / 2;
+
+        // Check eye contact (both irises centered)
+        const eyeContactThreshold = FACIAL_REFERENCE_POINTS.eyes.eyeContactThreshold;
+        const eyeCenterMin = FACIAL_REFERENCE_POINTS.eyes.eyeContactCenterX - eyeContactThreshold;
+        const eyeCenterMax = FACIAL_REFERENCE_POINTS.eyes.eyeContactCenterX + eyeContactThreshold;
+
+        const hasEyeContact = 
+            avgIrisX > eyeCenterMin && avgIrisX < eyeCenterMax &&
+            Math.abs(leftIrisX - rightIrisX) < FACIAL_REFERENCE_POINTS.eyes.eyeSymmetry &&
+            eyesOpen;
+
+        // Determine gaze direction if no eye contact
+        let gaze = "center";
+        if (!hasEyeContact) {
+            if (avgIrisX < FACIAL_REFERENCE_POINTS.eyes.eyeLookLeftThreshold) {
+                gaze = "left";
+            } else if (avgIrisX > FACIAL_REFERENCE_POINTS.eyes.eyeLookRightThreshold) {
+                gaze = "right";
+            } else {
+                gaze = "away";
             }
+        }
 
-            try {
-                holisticRef.current?.close?.();
-            } catch (err) {
-                console.error("Error closing holistic:", err);
-            }
+        console.log("👁️ Eye analysis:", { 
+            leftIrisX: leftIrisX.toFixed(3), 
+            rightIrisX: rightIrisX.toFixed(3), 
+            avgIrisX: avgIrisX.toFixed(3),
+            leftEyeOpen: leftEyeOpen.toFixed(3),
+            rightEyeOpen: rightEyeOpen.toFixed(3),
+            eyeContact: hasEyeContact,
+            gaze: gaze,
+            eyesOpen: eyesOpen
+        });
 
-            try {
-                const stream = webcamRef.current?.video?.srcObject;
-                if (stream) {
-                    stream.getTracks().forEach((track) => track.stop());
+        return { contact: hasEyeContact, gaze: gaze };
+    };
+
+    // Detect mouth movement and expression with reference points
+    const detectMouthExpression = (faceLandmarks) => {
+        if (!faceLandmarks || faceLandmarks.length < 478) return "neutral";
+
+        // Get mouth landmarks
+        const mouthTop = faceLandmarks[13];
+        const mouthBottom = faceLandmarks[14];
+        const mouthLeft = faceLandmarks[61];
+        const mouthRight = faceLandmarks[291];
+
+        if (!mouthTop || !mouthBottom || !mouthLeft || !mouthRight) return "neutral";
+
+        // Calculate metrics
+        const mouthOpenness = Math.abs(mouthBottom.y - mouthTop.y);
+        const mouthWidth = Math.abs(mouthRight.x - mouthLeft.x);
+        const centerMouthY = (mouthTop.y + mouthBottom.y) / 2;
+        
+        // Corner heights relative to center
+        const leftCornerRise = centerMouthY - mouthLeft.y; // Positive = raised
+        const rightCornerRise = centerMouthY - mouthRight.y;
+        const avgCornerRise = (leftCornerRise + rightCornerRise) / 2;
+
+        // Compare against reference points
+        const refs = FACIAL_REFERENCE_POINTS.mouth;
+
+        // SMILE detection
+        if (mouthOpenness >= refs.smileMouthOpen.min &&
+            mouthOpenness <= refs.smileMouthOpen.max &&
+            mouthWidth >= refs.smileMouthWidth &&
+            avgCornerRise > refs.smileCornerRise) {
+            console.log("✓ SMILE:", { mouthOpenness: mouthOpenness.toFixed(3), mouthWidth: mouthWidth.toFixed(3), cornerRise: avgCornerRise.toFixed(3) });
+            return "smile";
+        }
+
+        // FROWN detection
+        if (mouthOpenness >= refs.frownMouthOpen.min &&
+            mouthOpenness <= refs.frownMouthOpen.max &&
+            avgCornerRise < refs.frownCornerDrop) {
+            console.log("✓ FROWN:", { mouthOpenness: mouthOpenness.toFixed(3), cornerDrop: avgCornerRise.toFixed(3) });
+            return "frown";
+        }
+
+        console.log("Mouth metrics:", { mouthOpenness: mouthOpenness.toFixed(3), mouthWidth: mouthWidth.toFixed(3), cornerRise: avgCornerRise.toFixed(3) });
+        return "neutral";
+    };
+
+    // Detect eyebrow expression with reference points
+    const detectEyebrowExpression = (faceLandmarks) => {
+        if (!faceLandmarks || faceLandmarks.length < 478) return "normal";
+
+        const leftEyebrowInner = faceLandmarks[105];
+        const leftEyebrowOuter = faceLandmarks[107];
+        const rightEyebrowInner = faceLandmarks[334];
+        const rightEyebrowOuter = faceLandmarks[336];
+
+        if (!leftEyebrowInner || !leftEyebrowOuter || !rightEyebrowInner || !rightEyebrowOuter) {
+            return "normal";
+        }
+
+        // Calculate eyebrow angles
+        const leftEyebrowAngle = Math.atan2(
+            leftEyebrowOuter.y - leftEyebrowInner.y,
+            leftEyebrowOuter.x - leftEyebrowInner.x
+        ) * (180 / Math.PI);
+
+        const rightEyebrowAngle = Math.atan2(
+            rightEyebrowInner.y - rightEyebrowOuter.y,
+            rightEyebrowInner.x - rightEyebrowOuter.x
+        ) * (180 / Math.PI);
+
+        // Calculate eyebrow distance (inner points)
+        const eyebrowDistance = Math.abs(leftEyebrowInner.x - rightEyebrowInner.x);
+
+        const refs = FACIAL_REFERENCE_POINTS.eyebrows;
+
+        // MAD/ANGRY detection
+        const leftSlanted = leftEyebrowAngle >= refs.madAngleRange.min && leftEyebrowAngle <= refs.madAngleRange.max;
+        const rightSlanted = rightEyebrowAngle >= refs.madAngleRange.min && rightEyebrowAngle <= refs.madAngleRange.max;
+        const eyebrowsClose = eyebrowDistance < refs.madDistance;
+
+        if (leftSlanted && rightSlanted && eyebrowsClose) {
+            console.log("✓ MAD:", { leftAngle: leftEyebrowAngle.toFixed(1), rightAngle: rightEyebrowAngle.toFixed(1), distance: eyebrowDistance.toFixed(3) });
+            return "mad";
+        }
+
+        console.log("Eyebrow metrics:", { leftAngle: leftEyebrowAngle.toFixed(1), rightAngle: rightEyebrowAngle.toFixed(1), distance: eyebrowDistance.toFixed(3) });
+        return "normal";
+    };
+
+    // Reference points for hand gesture detection
+    const HAND_GESTURE_REFERENCES = {
+        openHand: {
+            // Open hand: fingers spread far apart
+            fingerSpreadMin: 0.35, // INCREASED from 0.25 - LESS SENSITIVE
+            description: "Open Hand"
+        },
+        closeHand: {
+            // Closed hand: fingers close together
+            fingerSpreadMax: 0.05, // DECREASED from 0.08 - LESS SENSITIVE
+            description: "Close Hand"
+        },
+        sidewaysRight: {
+            // Sideways right: hand rotated with index finger pointing right
+            palmAngleMin: 30,
+            palmAngleMax: 150,
+            description: "Sideways Right"
+        },
+        sidewaysLeft: {
+            // Sideways left: hand rotated with index finger pointing left
+            palmAngleMin: -150,
+            palmAngleMax: -30,
+            description: "Sideways Left"
+        }
+    };
+
+    // Detect hand movement with reference points
+    const detectHandMovement = (handLandmarks, lastHandPos) => {
+        if (!handLandmarks || handLandmarks.length < 21) return null;
+
+        const wrist = handLandmarks[0];
+        if (!wrist || wrist.visibility < 0.3) return null;
+
+        let movement = null;
+
+        // Initialize position on first detection
+        if (lastHandPos.x === null || lastHandPos.y === null) {
+            lastHandPos.x = wrist.x;
+            lastHandPos.y = wrist.y;
+            lastHandPos.fingerSpread = null;
+            lastHandPos.palmAngle = null;
+            return null;
+        }
+
+        // Check movement - compare with last position
+        const deltaX = wrist.x - lastHandPos.x;
+        const deltaY = wrist.y - lastHandPos.y;
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+        // Register movement if significant (>0.05 units) - LESS SENSITIVE
+        if (distance > 0.05) {
+            movement = "handMoved";
+        }
+
+        // Check if hand is opening or closing based on finger spread
+        const thumb = handLandmarks[4];
+        const pinky = handLandmarks[20];
+        const indexFinger = handLandmarks[8];
+        const middleFinger = handLandmarks[12];
+
+        if (thumb && pinky && thumb.visibility > 0.3 && pinky.visibility > 0.3) {
+            const fingerSpread = Math.abs(thumb.x - pinky.x);
+            
+            // Store current finger spread for reference
+            lastHandPos.currentFingerSpread = fingerSpread;
+
+            // Initialize finger spread on first detection
+            if (lastHandPos.fingerSpread === null) {
+                lastHandPos.fingerSpread = fingerSpread;
+            } else {
+                // Check against reference points
+                // Open Hand: fingers spread > 0.25 units apart
+                if (fingerSpread >= HAND_GESTURE_REFERENCES.openHand.fingerSpreadMin) {
+                    movement = "openHand";
+                    lastHandPos.fingerSpread = fingerSpread;
                 }
-            } catch (err) {
-                console.error("Error stopping webcam tracks:", err);
+                // Close Hand: fingers close together < 0.08 units apart
+                else if (fingerSpread <= HAND_GESTURE_REFERENCES.closeHand.fingerSpreadMax) {
+                    movement = "closeHand";
+                    lastHandPos.fingerSpread = fingerSpread;
+                }
+            }
+        }
+
+        // Detect sideways hand orientation
+        if (indexFinger && middleFinger && indexFinger.visibility > 0.3 && middleFinger.visibility > 0.3) {
+            // Calculate palm angle (angle of index finger to middle finger)
+            const palmAngle = Math.atan2(
+                middleFinger.y - indexFinger.y,
+                middleFinger.x - indexFinger.x
+            ) * (180 / Math.PI);
+
+            lastHandPos.currentPalmAngle = palmAngle;
+
+            if (lastHandPos.palmAngle === null) {
+                lastHandPos.palmAngle = palmAngle;
+            } else {
+                // Sideways Right: palm facing right (angle between 30-150 degrees)
+                if (palmAngle > 30 && palmAngle < 150) {
+                    movement = "sidewaysRight";
+                    lastHandPos.palmAngle = palmAngle;
+                }
+                // Sideways Left: palm facing left (angle between -150 to -30 degrees)
+                else if (palmAngle < -30 && palmAngle > -150) {
+                    movement = "sidewaysLeft";
+                    lastHandPos.palmAngle = palmAngle;
+                }
+            }
+        }
+
+        // Update position for next frame
+        lastHandPos.x = wrist.x;
+        lastHandPos.y = wrist.y;
+
+        return movement;
+    };
+
+    // Detect eye contact (looking at camera) - IMPROVED with iris tracking
+    const detectEyeContact = (faceLandmarks) => {
+        const result = detectEyeContactAdvanced(faceLandmarks);
+        return result.contact;
+    };
+
+    // Cleanup on unmount
+    useEffect(() => {
+        const camera = cameraRef.current;
+        const holistic = holisticRef.current;
+        const webcam = webcamRef.current;
+
+        return () => {
+            console.log("Cleaning up camera and holistic...");
+            
+            // Stop camera
+            if (camera) {
+                try {
+                    camera.stop?.();
+                    console.log("Camera stopped");
+                } catch (err) {
+                    console.error("Error stopping camera:", err);
+                }
+            }
+
+            // Close holistic
+            if (holistic) {
+                try {
+                    holistic.close?.();
+                    console.log("Holistic closed");
+                } catch (err) {
+                    console.error("Error closing holistic:", err);
+                }
+            }
+
+            // Stop webcam tracks
+            if (webcam?.video?.srcObject) {
+                const tracks = webcam.video.srcObject.getTracks();
+                tracks.forEach(track => {
+                    track.stop();
+                    console.log("Webcam track stopped");
+                });
             }
         };
     }, []);
 
-    const drawManualConnections = (
-        ctx,
-        landmarks,
-        connections,
-        width,
-        height,
-        color,
-        lineWidth
-    ) => {
-        if (!ctx || !landmarks || !connections) return;
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lineWidth;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        for (const connection of connections) {
-            const start = landmarks[connection.start];
-            const end = landmarks[connection.end];
-
-            if (!start || !end) continue;
-
-            ctx.beginPath();
-            ctx.moveTo(start.x * width, start.y * height);
-            ctx.lineTo(end.x * width, end.y * height);
-            ctx.stroke();
-        }
-    };
-
-    const drawManualLandmarks = (ctx, landmarks, width, height, color, radius) => {
-        if (!ctx || !landmarks) return;
-
-        ctx.fillStyle = color;
-
-        for (const landmark of landmarks) {
-            ctx.beginPath();
-            ctx.arc(
-                landmark.x * width,
-                landmark.y * height,
-                radius,
-                0,
-                Math.PI * 2
-            );
-            ctx.fill();
-        }
-    };
-
     const onUserMedia = async () => {
         try {
-            if (holisticRef.current) return;
+            console.log("Webcam ready, initializing MediaPipe Holistic...");
+            
+            if (holisticRef.current) {
+                console.log("MediaPipe already initialized");
+                return;
+            }
 
-            await new Promise((resolve) => {
-                const checkVideoReady = () => {
-                    const video = webcamRef.current?.video;
-                    if (video?.videoWidth > 0 && video?.videoHeight > 0) {
+            // Wait for video to have actual dimensions
+            await new Promise(resolve => {
+                const checkDimensions = () => {
+                    if (webcamRef.current?.video?.videoWidth > 0) {
+                        console.log("Video dimensions ready");
                         resolve();
                     } else {
-                        setTimeout(checkVideoReady, 100);
+                        setTimeout(checkDimensions, 100);
                     }
                 };
-                checkVideoReady();
+                checkDimensions();
             });
 
+            // Initialize Holistic (combines hands, pose, and face)
             const holistic = new Holistic({
-                locateFile: (file) =>
-                    `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
             });
 
             holistic.setOptions({
@@ -131,160 +443,396 @@ const HandTracker = () => {
                 minTrackingConfidence: 0.5,
             });
 
-            const POSE_CONNECTIONS = [
-                { start: 0, end: 1 },
-                { start: 1, end: 2 },
-                { start: 2, end: 3 },
-                { start: 3, end: 7 },
-                { start: 4, end: 5 },
-                { start: 5, end: 6 },
-                { start: 6, end: 8 },
-                { start: 9, end: 10 },
-                { start: 11, end: 13 },
-                { start: 13, end: 15 },
-                { start: 15, end: 17 },
-                { start: 17, end: 19 },
-                { start: 15, end: 21 },
-                { start: 12, end: 14 },
-                { start: 14, end: 16 },
-                { start: 16, end: 18 },
-                { start: 18, end: 20 },
-                { start: 16, end: 22 },
-                { start: 11, end: 23 },
-                { start: 23, end: 25 },
-                { start: 25, end: 27 },
-                { start: 27, end: 29 },
-                { start: 29, end: 31 },
-                { start: 12, end: 24 },
-                { start: 24, end: 26 },
-                { start: 26, end: 28 },
-                { start: 28, end: 30 },
-                { start: 30, end: 32 },
-            ];
-
-            const HAND_CONNECTIONS = [
-                { start: 0, end: 1 },
-                { start: 1, end: 2 },
-                { start: 2, end: 3 },
-                { start: 3, end: 4 },
-                { start: 0, end: 5 },
-                { start: 5, end: 6 },
-                { start: 6, end: 7 },
-                { start: 7, end: 8 },
-                { start: 0, end: 9 },
-                { start: 9, end: 10 },
-                { start: 10, end: 11 },
-                { start: 11, end: 12 },
-                { start: 0, end: 13 },
-                { start: 13, end: 14 },
-                { start: 14, end: 15 },
-                { start: 15, end: 16 },
-                { start: 0, end: 17 },
-                { start: 17, end: 18 },
-                { start: 18, end: 19 },
-                { start: 19, end: 20 },
-            ];
-
+            // Setup Holistic results with drawing
             holistic.onResults((results) => {
-                const video = webcamRef.current?.video;
-                const canvas = canvasRef.current;
-                if (!video || !canvas) return;
+                if (!webcamRef.current?.video || !canvasRef.current) return;
+                
+                const videoWidth = webcamRef.current.video.videoWidth;
+                const videoHeight = webcamRef.current.video.videoHeight;
+                
+                canvasRef.current.width = videoWidth;
+                canvasRef.current.height = videoHeight;
 
-                const width = video.videoWidth;
-                const height = video.videoHeight;
+                const canvasCtx = canvasRef.current.getContext("2d");
+                if (!canvasCtx) return;
 
-                canvas.width = width;
-                canvas.height = height;
-
-                const ctx = canvas.getContext("2d");
-                if (!ctx) return;
-
-                ctx.clearRect(0, 0, width, height);
-
+                canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
+                
+                // Draw video frame
                 if (results.image) {
-                    ctx.drawImage(results.image, 0, 0, width, height);
+                    canvasCtx.drawImage(results.image, 0, 0, videoWidth, videoHeight);
                 }
 
-                if (results.poseLandmarks) {
-                    drawManualConnections(
-                        ctx,
-                        results.poseLandmarks,
-                        POSE_CONNECTIONS,
-                        width,
-                        height,
-                        "#B77CFF",
-                        3
-                    );
-                    drawManualLandmarks(
-                        ctx,
-                        results.poseLandmarks,
-                        width,
-                        height,
-                        "#F2E8FF",
-                        3
-                    );
+                // Detect facial expression using new methods
+                const mouthExpression = detectMouthExpression(results.faceLandmarks);
+                const eyebrowExpression = detectEyebrowExpression(results.faceLandmarks);
+                
+                // Combine for final expression
+                let facialExpression = "neutral";
+                if (eyebrowExpression === "mad") {
+                    facialExpression = "mad";
+                } else if (mouthExpression === "smile") {
+                    facialExpression = "smile";
+                } else if (mouthExpression === "frown") {
+                    facialExpression = "frown";
                 }
+                
+                // Detect eye contact
+                const hasEyeContact = detectEyeContact(results.faceLandmarks);
 
+                // Detect hand movements and orientations
+                let leftMovement = null;
+                let rightMovement = null;
                 if (results.leftHandLandmarks) {
-                    drawManualConnections(
-                        ctx,
-                        results.leftHandLandmarks,
-                        HAND_CONNECTIONS,
-                        width,
-                        height,
-                        "#B77CFF",
-                        2
-                    );
-                    drawManualLandmarks(
-                        ctx,
-                        results.leftHandLandmarks,
-                        width,
-                        height,
-                        "#F2E8FF",
-                        2.4
-                    );
+                    leftMovement = detectHandMovement(results.leftHandLandmarks, handPosRef.current.leftHand);
                 }
-
                 if (results.rightHandLandmarks) {
-                    drawManualConnections(
-                        ctx,
-                        results.rightHandLandmarks,
-                        HAND_CONNECTIONS,
-                        width,
-                        height,
-                        "#B77CFF",
-                        2
-                    );
-                    drawManualLandmarks(
-                        ctx,
-                        results.rightHandLandmarks,
-                        width,
-                        height,
-                        "#F2E8FF",
-                        2.4
-                    );
+                    rightMovement = detectHandMovement(results.rightHandLandmarks, handPosRef.current.rightHand);
                 }
 
+                // Update tracking data
+                if (onTrackingUpdate) {
+                    onTrackingUpdate({
+                        facialExpression,
+                        eyeContact: hasEyeContact,
+                        leftHandMovement: leftMovement,
+                        rightHandMovement: rightMovement
+                    });
+                }
+
+                // Helper function to draw connections manually
+                const drawManualConnections = (landmarks, connections, color, lineWidth) => {
+                    if (!landmarks || !connections) return;
+                    
+                    canvasCtx.strokeStyle = color;
+                    canvasCtx.lineWidth = lineWidth;
+                    canvasCtx.lineCap = 'round';
+                    canvasCtx.lineJoin = 'round';
+
+                    for (const connection of connections) {
+                        const start = landmarks[connection.start];
+                        const end = landmarks[connection.end];
+
+                        if (start && end) {
+                            canvasCtx.beginPath();
+                            canvasCtx.moveTo(start.x * videoWidth, start.y * videoHeight);
+                            canvasCtx.lineTo(end.x * videoWidth, end.y * videoHeight);
+                            canvasCtx.stroke();
+                        }
+                    }
+                };
+
+                // Helper function to draw landmarks
+                const drawManualLandmarks = (landmarks, color, radius) => {
+                    if (!landmarks) return;
+                    
+                    canvasCtx.fillStyle = color;
+
+                    for (const landmark of landmarks) {
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(landmark.x * videoWidth, landmark.y * videoHeight, radius, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                    }
+                };
+
+                // Connection definitions for pose (MediaPipe Holistic Pose landmarks)
+                const POSE_CONNECTIONS = [
+                    // Head
+                    { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 7 },
+                    { start: 4, end: 5 }, { start: 5, end: 6 }, { start: 6, end: 8 },
+                    // Torso
+                    { start: 9, end: 10 },
+                    // Right arm
+                    { start: 11, end: 13 }, { start: 13, end: 15 }, { start: 15, end: 17 }, { start: 17, end: 19 },
+                    { start: 15, end: 21 },
+                    // Left arm
+                    { start: 12, end: 14 }, { start: 14, end: 16 }, { start: 16, end: 18 }, { start: 18, end: 20 },
+                    { start: 16, end: 22 },
+                    // Right leg
+                    { start: 11, end: 23 }, { start: 23, end: 25 }, { start: 25, end: 27 }, { start: 27, end: 29 },
+                    { start: 29, end: 31 },
+                    // Left leg
+                    { start: 12, end: 24 }, { start: 24, end: 26 }, { start: 26, end: 28 }, { start: 28, end: 30 },
+                    { start: 30, end: 32 }
+                ];
+
+                // Hand connections (simplified)
+                const HAND_CONNECTIONS = [
+                    { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 4 },
+                    { start: 0, end: 5 }, { start: 5, end: 6 }, { start: 6, end: 7 }, { start: 7, end: 8 },
+                    { start: 0, end: 9 }, { start: 9, end: 10 }, { start: 10, end: 11 }, { start: 11, end: 12 },
+                    { start: 0, end: 13 }, { start: 13, end: 14 }, { start: 14, end: 15 }, { start: 15, end: 16 },
+                    { start: 0, end: 17 }, { start: 17, end: 18 }, { start: 18, end: 19 }, { start: 19, end: 20 }
+                ];
+
+                // Draw Pose (body)
+                if (results.poseLandmarks) {
+                    drawManualConnections(results.poseLandmarks, POSE_CONNECTIONS, "#00FF00", 3);
+                    drawManualLandmarks(results.poseLandmarks, "#FF0000", 4);
+                }
+
+                // Draw Left Hand
+                if (results.leftHandLandmarks) {
+                    drawManualConnections(results.leftHandLandmarks, HAND_CONNECTIONS, "#00FF00", 2);
+                    drawManualLandmarks(results.leftHandLandmarks, "#FF0000", 3);
+                    
+                    // Draw reference points for left hand
+                    const leftThumb = results.leftHandLandmarks[4];
+                    const leftPinky = results.leftHandLandmarks[20];
+                    const leftIndex = results.leftHandLandmarks[8];
+                    const leftMiddle = results.leftHandLandmarks[12];
+                    
+                    if (leftThumb && leftPinky) {
+                        const leftFingerSpread = Math.abs(leftThumb.x - leftPinky.x);
+                        
+                        // Draw current spread indicator
+                        canvasCtx.fillStyle = "#FFFF00";
+                        canvasCtx.font = "12px Arial";
+                        canvasCtx.fillText(`L-Spread: ${leftFingerSpread.toFixed(2)}`, 10, 20);
+                        
+                        // Visual reference - Open Hand zone (green)
+                        if (leftFingerSpread >= HAND_GESTURE_REFERENCES.openHand.fingerSpreadMin) {
+                            canvasCtx.fillStyle = "rgba(0, 255, 0, 0.2)";
+                            canvasCtx.fillRect(10, 30, 140, 15);
+                            canvasCtx.fillStyle = "#00FF00";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("OPEN HAND", 20, 41);
+                        }
+                        // Visual reference - Close Hand zone (red)
+                        else if (leftFingerSpread <= HAND_GESTURE_REFERENCES.closeHand.fingerSpreadMax) {
+                            canvasCtx.fillStyle = "rgba(255, 0, 0, 0.2)";
+                            canvasCtx.fillRect(10, 30, 140, 15);
+                            canvasCtx.fillStyle = "#FF0000";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("CLOSE HAND", 20, 41);
+                        }
+                    }
+                    
+                    // Draw sideways reference
+                    if (leftIndex && leftMiddle) {
+                        const palmAngle = Math.atan2(
+                            leftMiddle.y - leftIndex.y,
+                            leftMiddle.x - leftIndex.x
+                        ) * (180 / Math.PI);
+                        
+                        canvasCtx.fillStyle = "#FFFF00";
+                        canvasCtx.font = "12px Arial";
+                        canvasCtx.fillText(`L-Angle: ${palmAngle.toFixed(0)}°`, 10, 55);
+                        
+                        // Sideways Right
+                        if (palmAngle > 30 && palmAngle < 150) {
+                            canvasCtx.fillStyle = "rgba(255, 165, 0, 0.2)";
+                            canvasCtx.fillRect(10, 60, 140, 15);
+                            canvasCtx.fillStyle = "#FFA500";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("SIDEWAYS RIGHT", 15, 71);
+                        }
+                        // Sideways Left
+                        else if (palmAngle < -30 && palmAngle > -150) {
+                            canvasCtx.fillStyle = "rgba(128, 0, 128, 0.2)";
+                            canvasCtx.fillRect(10, 60, 140, 15);
+                            canvasCtx.fillStyle = "#800080";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("SIDEWAYS LEFT", 20, 71);
+                        }
+                    }
+                }
+
+                // Draw Right Hand
+                if (results.rightHandLandmarks) {
+                    drawManualConnections(results.rightHandLandmarks, HAND_CONNECTIONS, "#00FF00", 2);
+                    drawManualLandmarks(results.rightHandLandmarks, "#FF0000", 3);
+                    
+                    // Draw reference points for right hand
+                    const rightThumb = results.rightHandLandmarks[4];
+                    const rightPinky = results.rightHandLandmarks[20];
+                    const rightIndex = results.rightHandLandmarks[8];
+                    const rightMiddle = results.rightHandLandmarks[12];
+                    
+                    if (rightThumb && rightPinky) {
+                        const rightFingerSpread = Math.abs(rightThumb.x - rightPinky.x);
+                        
+                        // Draw current spread indicator
+                        canvasCtx.fillStyle = "#FFFF00";
+                        canvasCtx.font = "12px Arial";
+                        canvasCtx.fillText(`R-Spread: ${rightFingerSpread.toFixed(2)}`, videoWidth - 170, 20);
+                        
+                        // Visual reference - Open Hand zone (green)
+                        if (rightFingerSpread >= HAND_GESTURE_REFERENCES.openHand.fingerSpreadMin) {
+                            canvasCtx.fillStyle = "rgba(0, 255, 0, 0.2)";
+                            canvasCtx.fillRect(videoWidth - 170, 30, 160, 15);
+                            canvasCtx.fillStyle = "#00FF00";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("OPEN HAND", videoWidth - 150, 41);
+                        }
+                        // Visual reference - Close Hand zone (red)
+                        else if (rightFingerSpread <= HAND_GESTURE_REFERENCES.closeHand.fingerSpreadMax) {
+                            canvasCtx.fillStyle = "rgba(255, 0, 0, 0.2)";
+                            canvasCtx.fillRect(videoWidth - 170, 30, 160, 15);
+                            canvasCtx.fillStyle = "#FF0000";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("CLOSE HAND", videoWidth - 150, 41);
+                        }
+                    }
+                    
+                    // Draw sideways reference
+                    if (rightIndex && rightMiddle) {
+                        const palmAngle = Math.atan2(
+                            rightMiddle.y - rightIndex.y,
+                            rightMiddle.x - rightIndex.x
+                        ) * (180 / Math.PI);
+                        
+                        canvasCtx.fillStyle = "#FFFF00";
+                        canvasCtx.font = "12px Arial";
+                        canvasCtx.fillText(`R-Angle: ${palmAngle.toFixed(0)}°`, videoWidth - 170, 55);
+                        
+                        // Sideways Right
+                        if (palmAngle > 30 && palmAngle < 150) {
+                            canvasCtx.fillStyle = "rgba(255, 165, 0, 0.2)";
+                            canvasCtx.fillRect(videoWidth - 170, 60, 160, 15);
+                            canvasCtx.fillStyle = "#FFA500";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("SIDEWAYS RIGHT", videoWidth - 155, 71);
+                        }
+                        // Sideways Left
+                        else if (palmAngle < -30 && palmAngle > -150) {
+                            canvasCtx.fillStyle = "rgba(128, 0, 128, 0.2)";
+                            canvasCtx.fillRect(videoWidth - 170, 60, 160, 15);
+                            canvasCtx.fillStyle = "#800080";
+                            canvasCtx.font = "11px Arial";
+                            canvasCtx.fillText("SIDEWAYS LEFT", videoWidth - 150, 71);
+                        }
+                    }
+                }
+
+                // Draw Face with expression and eye tracking
                 if (results.faceLandmarks) {
-                    drawManualLandmarks(
-                        ctx,
-                        results.faceLandmarks,
-                        width,
-                        height,
-                        "#F2E8FF",
-                        1.25
-                    );
+                    drawManualLandmarks(results.faceLandmarks, "#FF0000", 2);
+                    // Draw some basic face connections for lips and eyes
+                    const faceLandmarks = results.faceLandmarks;
+                    canvasCtx.strokeStyle = "#00FF00";
+                    canvasCtx.lineWidth = 1;
+                    
+                    // Draw mouth
+                    const mouthStart = 61;
+                    const mouthEnd = 291;
+                    if (faceLandmarks[mouthStart] && faceLandmarks[mouthEnd]) {
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(faceLandmarks[mouthStart].x * videoWidth, faceLandmarks[mouthStart].y * videoHeight);
+                        canvasCtx.lineTo(faceLandmarks[mouthEnd].x * videoWidth, faceLandmarks[mouthEnd].y * videoHeight);
+                        canvasCtx.stroke();
+                    }
+
+                    // Detect and display comprehensive facial analysis
+                    const mouthExpr = detectMouthExpression(faceLandmarks);
+                    const eyebrowExpr = detectEyebrowExpression(faceLandmarks);
+                    const eyeAnalysis = detectEyeContactAdvanced(faceLandmarks);
+
+                    // Combine expressions for final result
+                    let finalExpression = "neutral";
+                    if (eyebrowExpr === "mad") {
+                        finalExpression = "mad";
+                    } else if (mouthExpr === "smile") {
+                        finalExpression = "smile";
+                    } else if (mouthExpr === "frown") {
+                        finalExpression = "frown";
+                    }
+
+                    // Display expression with color coding
+                    let expressionColor = "#FFFF00";
+                    if (finalExpression === "smile") expressionColor = "#00FF00";
+                    else if (finalExpression === "frown") expressionColor = "#FF6600";
+                    else if (finalExpression === "mad") expressionColor = "#FF0000";
+
+                    canvasCtx.fillStyle = expressionColor;
+                    canvasCtx.font = "bold 16px Arial";
+                    canvasCtx.fillText(`😊 Expression: ${finalExpression.toUpperCase()}`, 10, videoHeight - 60);
+
+                    // Display eye contact and gaze direction
+                    canvasCtx.font = "bold 16px Arial";
+                    if (eyeAnalysis.contact) {
+                        canvasCtx.fillStyle = "#00FF00";
+                        canvasCtx.fillText("👁️ EYE CONTACT: YES", 10, videoHeight - 40);
+                    } else {
+                        canvasCtx.fillStyle = "#FF6600";
+                        canvasCtx.fillText(`👁️ LOOKING: ${eyeAnalysis.gaze.toUpperCase()}`, 10, videoHeight - 40);
+                    }
+
+                    // Display mouth openness indicator
+                    const mouthTop = faceLandmarks[13];
+                    const mouthBottom = faceLandmarks[14];
+                    if (mouthTop && mouthBottom) {
+                        const mouthOpenness = Math.abs(mouthBottom.y - mouthTop.y);
+                        canvasCtx.fillStyle = "#CCFFCC";
+                        canvasCtx.font = "12px Arial";
+                        canvasCtx.fillText(`Mouth: ${(mouthOpenness * 100).toFixed(1)}%`, 10, videoHeight - 20);
+                    }
+
+                    // Draw iris centers for eye tracking visualization
+                    const leftIrisCenter = faceLandmarks[468];
+                    const rightIrisCenter = faceLandmarks[473];
+                    
+                    if (leftIrisCenter && rightIrisCenter) {
+                        // Draw iris circles
+                        canvasCtx.strokeStyle = "#00FFFF";
+                        canvasCtx.lineWidth = 2;
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(leftIrisCenter.x * videoWidth, leftIrisCenter.y * videoHeight, 8, 0, 2 * Math.PI);
+                        canvasCtx.stroke();
+                        
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(rightIrisCenter.x * videoWidth, rightIrisCenter.y * videoHeight, 8, 0, 2 * Math.PI);
+                        canvasCtx.stroke();
+
+                        // Draw center reference line for eye contact
+                        canvasCtx.strokeStyle = "#00FF00";
+                        canvasCtx.lineWidth = 1;
+                        canvasCtx.setLineDash([5, 5]);
+                        const eyeCenterY = (leftIrisCenter.y + rightIrisCenter.y) / 2;
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(0, eyeCenterY * videoHeight);
+                        canvasCtx.lineTo(videoWidth, eyeCenterY * videoHeight);
+                        canvasCtx.stroke();
+                        canvasCtx.setLineDash([]);
+                    }
+
+                    // Draw mouth reference points
+                    const mouthLeft = faceLandmarks[61];
+                    const mouthRight = faceLandmarks[291];
+                    if (mouthLeft && mouthRight) {
+                        canvasCtx.fillStyle = "#FF00FF";
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(mouthLeft.x * videoWidth, mouthLeft.y * videoHeight, 3, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                        
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(mouthRight.x * videoWidth, mouthRight.y * videoHeight, 3, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                    }
+
+                    // Draw eyebrow inner points for mad detection
+                    const leftEyebrowInner = faceLandmarks[105];
+                    const rightEyebrowInner = faceLandmarks[334];
+                    if (leftEyebrowInner && rightEyebrowInner) {
+                        canvasCtx.fillStyle = "#00FFFF";
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(leftEyebrowInner.x * videoWidth, leftEyebrowInner.y * videoHeight, 2, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                        
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(rightEyebrowInner.x * videoWidth, rightEyebrowInner.y * videoHeight, 2, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                    }
                 }
             });
 
             holisticRef.current = holistic;
 
+            // Now start the camera
             const camera = new cam.Camera(webcamRef.current.video, {
                 onFrame: async () => {
                     if (holisticRef.current && webcamRef.current?.video) {
-                        await holisticRef.current.send({
-                            image: webcamRef.current.video,
-                        });
+                        await holisticRef.current.send({ image: webcamRef.current.video });
                     }
                 },
                 width: 640,
@@ -292,28 +840,47 @@ const HandTracker = () => {
             });
 
             cameraRef.current = camera;
-            await camera.start();
+            camera.start();
+            console.log("Holistic tracking started - hands, body, and face");
         } catch (err) {
             console.error("Holistic tracker error:", err);
-            setError(err?.message || "Unable to start body tracker.");
+            setError(`Error: ${err.message}`);
         }
     };
 
     return (
-        <div className="tracker-shell">
-            {error ? (
-                <div className="tracker-error">
-                    <i className="bi bi-exclamation-triangle-fill"></i>
-                    <span>Webcam Error</span>
-                    <small>{error}</small>
+        <div style={{ position: "relative", width: "100%", height: "250px", borderRadius: "10px", overflow: "hidden", background: "#1a1a1a" }}>
+            {error && (
+                <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: "#1a1a1a",
+                    color: "#ff6b6b",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 10,
+                    fontSize: "13px",
+                    padding: "20px",
+                    textAlign: "center",
+                    flexDirection: "column",
+                    gap: "10px"
+                }}>
+                    <span>⚠️ Webcam Error</span>
+                    <span style={{ fontSize: "12px" }}>{error}</span>
                 </div>
-            ) : null}
-
-            <Webcam
-                ref={webcamRef}
-                mirrored
-                audio={false}
-                className="tracker-video"
+            )}
+            <Webcam 
+                ref={webcamRef} 
+                mirrored={false} 
+                style={{ 
+                    position: "absolute", 
+                    width: "100%", 
+                    height: "100%",
+                }}
                 onUserMedia={onUserMedia}
                 onUserMediaError={(err) => {
                     console.error("Webcam permission error:", err);
@@ -322,11 +889,17 @@ const HandTracker = () => {
                 videoConstraints={{
                     width: 640,
                     height: 480,
-                    facingMode: "user",
+                    facingMode: "user"
                 }}
             />
-
-            <canvas ref={canvasRef} className="tracker-canvas" />
+            <canvas 
+                ref={canvasRef} 
+                style={{ 
+                    position: "absolute", 
+                    width: "100%", 
+                    height: "100%"
+                }} 
+            />
         </div>
     );
 };
