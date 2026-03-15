@@ -1043,10 +1043,9 @@ function Session() {
     const toggleMemorizeMode = () => {
         setIsMemorizeMode((prev) => {
             const next = !prev;
-
+            // NEW: Direct toggle visibility on button press
+            setIsScriptVisible(next ? false : true);  // Hide if memorize ON, show if OFF
             clearTimeout(hideScriptTimeoutRef.current);
-            setIsScriptVisible(true);
-
             return next;
         });
     };
