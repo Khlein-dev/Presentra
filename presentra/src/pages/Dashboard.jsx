@@ -14,13 +14,6 @@ function getScoreTone(score = 0) {
     return "bad";
 }
 
-function getPaceTone(label = "") {
-    if (label === "Good Pace") return "good";
-    if (label === "Too Slow") return "warn";
-    if (label === "Too Fast") return "bad";
-    return "neutral";
-}
-
 function tokenizeText(text = "") {
     return text.match(/\S+/g) || [];
 }
@@ -91,6 +84,7 @@ function buildWordDiff(script = "", transcript = "") {
 
     const scriptTotal = scriptTokens.length || 1;
     const transcriptTotal = transcriptTokens.length || 1;
+
     const matchRate = Math.round((matched / scriptTotal) * 100);
     const omissionRate = Math.round((missing / scriptTotal) * 100);
     const extraRate = Math.round((extra / transcriptTotal) * 100);
@@ -104,6 +98,56 @@ function buildWordDiff(script = "", transcript = "") {
         matchRate,
         omissionRate,
         extraRate,
+    };
+}
+
+function getVolumeInsights(volume) {
+    if (!volume?.history?.length) {
+        return {
+            avg: 0,
+            quietPct: 0,
+            loudPct: 0,
+            goodPct: 0,
+            quietThreshold: volume?.quietThreshold ?? 35,
+            loudThreshold: volume?.loudThreshold ?? 90,
+        };
+    }
+
+    const quietThreshold = volume.quietThreshold ?? 35;
+    const loudThreshold = volume.loudThreshold ?? 90;
+    const history = volume.history;
+
+    const MAX_POINTS = 140;
+    const step = Math.max(1, Math.floor(history.length / MAX_POINTS));
+    const points = [];
+
+    for (let i = 0; i < history.length; i += step) {
+        points.push(history[i]);
+    }
+
+    const smooth = (arr, win = 4) =>
+        arr.map((_, i) => {
+            const slice = arr.slice(Math.max(0, i - win), i + win + 1);
+            return slice.reduce((a, b) => a + b, 0) / slice.length;
+        });
+
+    const smoothed = smooth(points);
+    const avg = Math.round(smoothed.reduce((a, b) => a + b, 0) / smoothed.length);
+    const quietPct = Math.round(
+        (smoothed.filter((v) => v < quietThreshold).length / smoothed.length) * 100
+    );
+    const loudPct = Math.round(
+        (smoothed.filter((v) => v > loudThreshold).length / smoothed.length) * 100
+    );
+    const goodPct = Math.max(0, 100 - quietPct - loudPct);
+
+    return {
+        avg,
+        quietPct,
+        loudPct,
+        goodPct,
+        quietThreshold,
+        loudThreshold,
     };
 }
 
@@ -168,7 +212,7 @@ function SummaryPanel({ summary, pacing, overall }) {
                 <StatCard
                     icon="bi-activity"
                     label="Average WPM"
-                    value={summary?.averageWPM || summary?.wpm || 0}
+                    value={summary?.averageWPM || summary?.wpm || pacing?.averageWPM || pacing?.wpm || 0}
                     sub={pacing?.idealRange || "90–160 WPM"}
                     tone={getScoreTone(pacing?.paceScore)}
                 />
@@ -232,9 +276,7 @@ function FluencyAnalyzer({ fluency }) {
     };
 
     const linePath = makeSmoothPath(buckets);
-    const areaPath = `${linePath} L ${x(bucketCount - 1)},${padT + chartH} L ${x(
-        0
-    )},${padT + chartH} Z`;
+    const areaPath = `${linePath} L ${x(bucketCount - 1)},${padT + chartH} L ${x(0)},${padT + chartH} Z`;
 
     const breakdownEntries = Object.entries(fillerBreakdown).sort((a, b) => b[1] - a[1]);
 
@@ -264,7 +306,7 @@ function FluencyAnalyzer({ fluency }) {
                 <StatCard
                     icon="bi-percent"
                     label="Filler Rate"
-                    value={`${fillerRate}%`}
+                    value={`${fillerRate ?? 0}%`}
                     sub="Of total spoken words"
                     tone={Number(fillerRate) <= 3 ? "good" : Number(fillerRate) <= 7 ? "warn" : "bad"}
                 />
@@ -358,12 +400,7 @@ function FluencyAnalyzer({ fluency }) {
                                     onMouseLeave={() => setHoveredIndex(null)}
                                     style={{ cursor: "pointer" }}
                                 >
-                                    <circle
-                                        cx={x(index)}
-                                        cy={y(value)}
-                                        r={12}
-                                        fill="transparent"
-                                    />
+                                    <circle cx={x(index)} cy={y(value)} r={12} fill="transparent" />
                                     {active ? (
                                         <circle
                                             cx={x(index)}
@@ -449,15 +486,9 @@ function FluencyAnalyzer({ fluency }) {
                         <h4>Fluency Interpretation</h4>
                     </div>
                     <ul className="dash-insight-list">
-                        <li>
-                            Lower filler density usually means stronger pacing and more intentional pauses.
-                        </li>
-                        <li>
-                            Repeated filler clusters often happen during transitions between ideas.
-                        </li>
-                        <li>
-                            If fillers rise late in the speech, memorization or fatigue may be affecting delivery.
-                        </li>
+                        <li>Lower filler density usually means stronger pacing and more intentional pauses.</li>
+                        <li>Repeated filler clusters often happen during transitions between ideas.</li>
+                        <li>If fillers rise late in the speech, memorization or fatigue may be affecting delivery.</li>
                     </ul>
                 </div>
             </div>
@@ -494,7 +525,7 @@ function VolumeGraph({ volume }) {
     const loudPct = Math.round(
         (smoothed.filter((v) => v > loudThreshold).length / smoothed.length) * 100
     );
-    const goodPct = 100 - quietPct - loudPct;
+    const goodPct = Math.max(0, 100 - quietPct - loudPct);
 
     const svgW = 1000;
     const svgH = 220;
@@ -520,9 +551,7 @@ function VolumeGraph({ volume }) {
     };
 
     const linePath = makeSmoothPath(topPoints);
-    const areaPath = `${linePath} L ${xAt(smoothed.length - 1)},${padT + chartH} L ${xAt(
-        0
-    )},${padT + chartH} Z`;
+    const areaPath = `${linePath} L ${xAt(smoothed.length - 1)},${padT + chartH} L ${xAt(0)},${padT + chartH} Z`;
 
     const xLabelIndices = [
         0,
@@ -543,7 +572,10 @@ function VolumeGraph({ volume }) {
                 subtitle="Shows how steady and controlled your projection was across the session."
             />
 
-            <div className="dash-summary-grid volume-top-grid">
+            <div
+                className="dash-summary-grid volume-top-grid"
+                style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+            >
                 <StatCard
                     icon="bi-soundwave"
                     label="Average Volume"
@@ -603,7 +635,7 @@ function VolumeGraph({ volume }) {
                         x={padL}
                         y={padT}
                         width={chartW}
-                        height={(100 - loudThreshold) / 100 * chartH}
+                        height={((100 - loudThreshold) / 100) * chartH}
                         fill="rgba(251,113,133,0.05)"
                     />
                     <rect
@@ -762,13 +794,301 @@ function ScriptTranscriptDiff({ script = "", transcript = "" }) {
     );
 }
 
+function ImprovementRecommendationsPanel({
+    pacing,
+    summary,
+    volume,
+    fluency,
+    overall,
+    transcript,
+    script,
+}) {
+    const diff = useMemo(() => buildWordDiff(script, transcript), [script, transcript]);
+    const volumeInsights = useMemo(() => getVolumeInsights(volume), [volume]);
+
+    const recommendations = useMemo(() => {
+        const averageWPM = Number(
+            pacing?.averageWPM ??
+            pacing?.wpm ??
+            summary?.averageWPM ??
+            summary?.wpm ??
+            0
+        );
+
+        const paceLabel = pacing?.paceLabel || "";
+        const fillerRate = Number(fluency?.fillerRate ?? 0);
+        const fillerCount = Number(fluency?.fillerCount ?? 0);
+        const overallScore = Number(overall?.overallScore ?? 0);
+        const matchRate = Number(diff.matchRate ?? 0);
+        const quietPct = Number(volumeInsights.quietPct ?? 0);
+        const loudPct = Number(volumeInsights.loudPct ?? 0);
+        const avgVolume = Number(volumeInsights.avg ?? 0);
+        const quietThreshold = Number(volumeInsights.quietThreshold ?? 35);
+
+        const recommendationLibrary = {
+            slowPace: {
+                key: "slow-pace",
+                icon: "bi-hourglass-split",
+                eyebrow: "Pacing",
+                title: "Your delivery was slower than the ideal speaking range",
+                description:
+                    "Practice increasing speaking momentum while keeping your words crisp and controlled. This helps your talk feel more engaging and less flat.",
+                cta: "Watch pacing video",
+                url: "https://www.youtube.com/watch?v=LRi-CSIPZ7c",
+                videoTitle: 'Effective Public Speaking Skill "Speed Up" | Improve Your Pace',
+                source: "Public Speaking School",
+                tone: "warn",
+                tags: ["Too Slow", "Pace", "Energy"],
+                reason:
+                    paceLabel === "Too Slow"
+                        ? `Detected pacing label: ${paceLabel}`
+                        : `Average pace is ${averageWPM} WPM`,
+            },
+            fastPace: {
+                key: "fast-pace",
+                icon: "bi-lightning-charge-fill",
+                eyebrow: "Pacing",
+                title: "Some parts of your speech moved too quickly",
+                description:
+                    "Train pauses, phrase grouping, and breath timing so your audience can absorb your ideas without you sounding rushed.",
+                cta: "Watch pace control",
+                url: "https://www.youtube.com/watch?v=9ca8aSgVnZM",
+                videoTitle: "How to Slow your Speaking Pace Effectively",
+                source: "Speak Confident English",
+                tone: "bad",
+                tags: ["Too Fast", "Pause", "Control"],
+                reason:
+                    paceLabel === "Too Fast"
+                        ? `Detected pacing label: ${paceLabel}`
+                        : `Average pace is ${averageWPM} WPM`,
+            },
+            quietVoice: {
+                key: "quiet-voice",
+                icon: "bi-volume-off-fill",
+                eyebrow: "Projection",
+                title: "Your voice was often too quiet",
+                description:
+                    "Improve projection, breath support, and vocal placement so you sound clearer and more authoritative without shouting.",
+                cta: "Watch projection video",
+                url: "https://www.youtube.com/watch?v=eWB_5Qww4d4",
+                videoTitle: "Public Speaking Tips Increase the Power of your Voice",
+                source: "Communication Coach Alexander Lyon",
+                tone: "warn",
+                tags: ["Too Quiet", "Projection", "Voice"],
+                reason: `${quietPct}% of the session was below the quiet threshold`,
+            },
+            loudVoice: {
+                key: "loud-voice",
+                icon: "bi-volume-up-fill",
+                eyebrow: "Projection",
+                title: "Your volume rose above the comfortable range too often",
+                description:
+                    "Work on steadier projection and more controlled emphasis so strong moments feel intentional rather than overpowering.",
+                cta: "Watch vocal control",
+                url: "https://www.youtube.com/watch?v=qCIlFBmXYJU",
+                videoTitle: "How To Use Your Voice Effectively When Giving a Presentation",
+                source: "Communication Coach Alexander Lyon",
+                tone: "bad",
+                tags: ["Too Loud", "Control", "Delivery"],
+                reason: `${loudPct}% of the session was above the loud threshold`,
+            },
+            fillerWords: {
+                key: "filler-words",
+                icon: "bi-chat-quote-fill",
+                eyebrow: "Fluency",
+                title: "Filler words are interrupting your flow",
+                description:
+                    "Train silent pauses and cleaner idea transitions so you sound more intentional, composed, and polished.",
+                cta: "Watch fluency drill",
+                url: "https://www.youtube.com/watch?v=Vbfg1N2Jirw",
+                videoTitle: "How to Get Rid of Filler Words",
+                source: "The Art of Improvement",
+                tone: "warn",
+                tags: ["Fillers", "Fluency", "Clarity"],
+                reason: `${fillerCount} fillers detected at ${fillerRate}% filler rate`,
+            },
+            confidence: {
+                key: "confidence",
+                icon: "bi-camera-video-fill",
+                eyebrow: "Presence",
+                title: "Strengthen your overall public speaking confidence",
+                description:
+                    "This is a strong next step when your session needs broader polish across delivery, confidence, and communication presence.",
+                cta: "Watch confidence lesson",
+                url: "https://www.youtube.com/watch?v=5yCqhY1D-VE",
+                videoTitle: "How to Communicate With Confidence & Ease",
+                source: "Harvard Business Review",
+                tone: "good",
+                tags: ["Confidence", "Presence", "Communication"],
+                reason: `Overall score: ${overallScore}`,
+            },
+            scriptAccuracy: {
+                key: "script-accuracy",
+                icon: "bi-journal-check",
+                eyebrow: "Delivery",
+                title: "Your script accuracy can be improved",
+                description:
+                    "Practicing delivery structure and audience-focused speaking can help you stay aligned to your intended message more consistently.",
+                cta: "Watch speaking fundamentals",
+                url: "https://www.youtube.com/watch?v=i5mYphUoOCs",
+                videoTitle: "Public Speaking For Beginners",
+                source: "Communication Coach Alexander Lyon",
+                tone: "warn",
+                tags: ["Accuracy", "Structure", "Delivery"],
+                reason: `${matchRate}% script match`,
+            },
+        };
+
+        const items = [];
+
+        if (paceLabel === "Too Slow" || (averageWPM > 0 && averageWPM < 95)) {
+            items.push(recommendationLibrary.slowPace);
+        }
+
+        if (paceLabel === "Too Fast" || averageWPM > 165) {
+            items.push(recommendationLibrary.fastPace);
+        }
+
+        if (quietPct >= 25 || (avgVolume > 0 && avgVolume < quietThreshold)) {
+            items.push(recommendationLibrary.quietVoice);
+        }
+
+        if (loudPct >= 18) {
+            items.push(recommendationLibrary.loudVoice);
+        }
+
+        if (fillerRate >= 4 || fillerCount >= 6) {
+            items.push(recommendationLibrary.fillerWords);
+        }
+
+        if (matchRate > 0 && matchRate < 85) {
+            items.push(recommendationLibrary.scriptAccuracy);
+        }
+
+        if (overallScore < 85 || items.length === 0) {
+            items.push(recommendationLibrary.confidence);
+        }
+
+        const deduped = Array.from(
+            new Map(items.map((item) => [item.key, item])).values()
+        );
+
+        return deduped.slice(0, 4);
+    }, [pacing, summary, fluency, overall, diff, volumeInsights]);
+
+    const priorityTone = useMemo(() => {
+        if (recommendations.some((item) => item.tone === "bad")) return "bad";
+        if (recommendations.some((item) => item.tone === "warn")) return "warn";
+        return "good";
+    }, [recommendations]);
+
+    if (!recommendations.length) return null;
+
+    return (
+        <div className="dash-panel reco-panel">
+            <SectionTitle
+                icon="bi-magic"
+                title="Improvement Recommendations"
+                subtitle="A personalized recommendation section based on your pacing, projection, fluency, and delivery quality."
+            />
+
+            <div className="reco-hero-strip">
+                <div className="reco-hero-copy">
+                    <div className={`reco-priority-pill tone-${priorityTone}`}>
+                        <i className="bi bi-stars"></i>
+                        <span>Adaptive coaching</span>
+                    </div>
+
+                    <h3>Recommended next practice focus</h3>
+                    <p>
+                        These YouTube recommendations are chosen from the actual session results,
+                        so the improvement plan changes depending on how the speaker performed.
+                    </p>
+                </div>
+
+                <div className="reco-metric-mini-grid">
+                    <div className="reco-mini-card">
+                        <span>Pace</span>
+                        <strong>{pacing?.paceLabel || "Good Pace"}</strong>
+                    </div>
+                    <div className="reco-mini-card">
+                        <span>Quiet Time</span>
+                        <strong>{volumeInsights.quietPct}%</strong>
+                    </div>
+                    <div className="reco-mini-card">
+                        <span>Fillers</span>
+                        <strong>{fluency?.fillerCount ?? 0}</strong>
+                    </div>
+                    <div className="reco-mini-card">
+                        <span>Score</span>
+                        <strong>{overall?.overallScore ?? 0}</strong>
+                    </div>
+                </div>
+            </div>
+
+            <div className="reco-grid">
+                {recommendations.map((item) => (
+                    <article key={item.key} className={`reco-card tone-${item.tone}`}>
+                        <div>
+                            <div className="reco-card-top">
+                                <div className="reco-icon-wrap">
+                                    <i className={`bi ${item.icon}`}></i>
+                                </div>
+
+                                <div className="reco-copy">
+                                    <span className="reco-eyebrow">{item.eyebrow}</span>
+                                    <h4>{item.title}</h4>
+                                    <p>{item.description}</p>
+                                </div>
+                            </div>
+
+                            <div className="reco-meta">
+                                <div className="reco-video-meta">
+                                    <span className="reco-video-label">Recommended video</span>
+                                    <strong>{item.videoTitle}</strong>
+                                    <span>{item.source}</span>
+                                </div>
+
+                                <div className="reco-reason">
+                                    <i className="bi bi-graph-up-arrow"></i>
+                                    <span>{item.reason}</span>
+                                </div>
+
+                                <div className="reco-tag-row">
+                                    {item.tags.map((tag) => (
+                                        <span key={tag} className="reco-tag">
+                                            {tag}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="reco-cta-btn"
+                        >
+                            <span>{item.cta}</span>
+                            <i className="bi bi-box-arrow-up-right"></i>
+                        </a>
+                    </article>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function FeedbackPanel({ feedback = [] }) {
+    if (!feedback.length) return null;
+
     return (
         <div className="dash-panel">
             <SectionTitle
                 icon="bi-lightbulb-fill"
-                title="Coaching Feedback"
-                subtitle="Key improvement points based on your session results."
+                title="Coach Notes"
+                subtitle="Additional improvement notes generated from your session."
             />
 
             <div className="dash-feedback-list">
@@ -806,7 +1126,16 @@ function Dashboard() {
         );
     }
 
-    const { summary, fluency, pacing, overall, feedback, volume, transcript, script } = data;
+    const {
+        summary,
+        fluency,
+        pacing,
+        overall,
+        feedback,
+        volume,
+        transcript,
+        script,
+    } = data;
 
     return (
         <div className="dashboard-page">
@@ -830,6 +1159,17 @@ function Dashboard() {
                 <FluencyAnalyzer fluency={fluency} />
                 <VolumeGraph volume={volume} />
                 <ScriptTranscriptDiff script={script} transcript={transcript} />
+
+                <ImprovementRecommendationsPanel
+                    pacing={pacing}
+                    summary={summary}
+                    volume={volume}
+                    fluency={fluency}
+                    overall={overall}
+                    transcript={transcript}
+                    script={script}
+                />
+
                 <FeedbackPanel feedback={feedback} />
 
                 <div className="dashboard-footer-actions">

@@ -43,13 +43,13 @@ function Footer() {
                     <div className="col-md-3 footer-contact">
                         <h6>Contact</h6>
 
-                        <p>support@presentra.ai</p>
+                        <p>kierjerymiepascua@gmail.com</p>
                         <p>Philippines</p>
 
                         <div className="footer-socials">
-                            <a href="#"><i className="bi bi-facebook"></i></a>
-                            <a href="#"><i className="bi bi-twitter-x"></i></a>
-                            <a href="#"><i className="bi bi-linkedin"></i></a>
+                            <a href="https://github.com/Khlein-dev/Presentra" target="_blank" rel="noopener noreferrer"><i className="bi bi-github"></i></a>
+                            <a href="https://www.facebook.com/presentra" target="_blank" rel="noopener noreferrer"><i className="bi bi-facebook"></i></a>
+                            <a href="https://www.linkedin.com/in/kier-jerymie-pascua-3026493b7/" target="_blank" rel="noopener noreferrer"><i className="bi bi-linkedin"></i></a>
                         </div>
                     </div>
 
