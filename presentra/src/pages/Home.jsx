@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/Home.css";
 import heroImage from "../assets/hero-section.jpg";
@@ -6,6 +6,41 @@ import heroImage from "../assets/hero-section.jpg";
 function Home() {
     const navigate = useNavigate();
     const [script, setScript] = useState("");
+
+    useEffect(() => {
+        const prefersReducedMotion = window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches;
+
+        const revealElements = document.querySelectorAll(".reveal");
+
+        if (prefersReducedMotion) {
+            revealElements.forEach((element) => {
+                element.classList.add("revealed");
+            });
+            return;
+        }
+
+        const observer = new IntersectionObserver(
+            (entries, currentObserver) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add("revealed");
+                        currentObserver.unobserve(entry.target);
+                    }
+                });
+            },
+            {
+                root: null,
+                threshold: 0.16,
+                rootMargin: "0px 0px -10% 0px",
+            }
+        );
+
+        revealElements.forEach((element) => observer.observe(element));
+
+        return () => observer.disconnect();
+    }, []);
 
     const startSession = () => {
         if (!script.trim()) {
@@ -19,62 +54,106 @@ function Home() {
     };
 
     return (
-        <div className="text-dark body" style={{ fontFamily: "Arial, sans-serif" }}>
+        <div className="home-page">
+            <section
+                className="hero-section"
+                style={{ backgroundImage: `url(${heroImage})` }}
+            >
+                <div className="hero-overlay" />
 
-            {/* HERO SECTION */}
-            <section className="py-5 text-center text-white hero-section"  style={{ backgroundImage: `url(${heroImage})` }}>
-                <div className="container" style={{ position: "relative", zIndex: 2 }}>
-                    <h1 className="display-4 fw-bold mb-3">Presentra</h1>
-                    <h2 className="fw-light mb-3">
+                <div className="container hero-content reveal revealed">
+                    <span className="hero-badge">AI-Powered Public Speaking Coach</span>
+                    
+                    <br/>
+
+                    <h1 className="hero-title" aria-label="Presentra">
+                        {"PRESENTRA".split("").map((letter, index) => (
+                            <span
+                                key={`${letter}-${index}`}
+                                className="hero-letter"
+                                style={{ "--letter-delay": `${index * 0.08}s` }}
+                            >
+                                {letter}
+                            </span>
+                        ))}
+                    </h1>
+
+
+                    <h2 className="hero-subtitle">
                         Hack Your Fear. Own The Stage.
                     </h2>
-                    <p className="lead mx-auto" style={{ maxWidth: "700px" }}>
-                        Presentra is an AI-powered public speaking training platform designed
-                        to help students improve confidence, clarity, and pacing through
-                        real-time speech analysis and smart performance feedback.
+
+                    <p className="hero-description">
+                        Presentra is an AI-powered public speaking training platform
+                        designed to help students improve confidence, clarity, and pacing
+                        through real-time speech analysis and smart performance feedback.
                     </p>
 
-                    <button
-                        onClick={() =>
-                            document
-                                .getElementById("start-section")
-                                .scrollIntoView({ behavior: "smooth" })
-                        }
-                        className="btn btn-light btn-lg mt-4 fw-bold text-dark"
-                    >
-                        Start Practicing
-                    </button>
+                    <div className="hero-actions">
+                        <button
+                            onClick={() =>
+                                document
+                                    .getElementById("start-section")
+                                    .scrollIntoView({ behavior: "smooth" })
+                            }
+                            className="primary-btn"
+                        >
+                            Start Practicing
+                        </button>
+
+                        <a href="#features" className="secondary-btn">
+                            Explore Features
+                        </a>
+                    </div>
                 </div>
+
+                <div className="hero-glow hero-glow-1" />
+                <div className="hero-glow hero-glow-2" />
             </section>
 
-            {/* FEATURES SECTION */}
-            <section className="py-5 text-center">
+            <section id="features" className="features-section">
                 <div className="container">
-                    <h2 className="mb-5 text-white">Why Presentra?</h2>
+                    <div className="section-heading reveal">
+                        <span className="section-tag">Why Presentra</span>
+                        <h2>Train smarter. Speak better.</h2>
+                        <p>
+                            Built to help you practice with more confidence, better pacing,
+                            and clearer delivery.
+                        </p>
+                    </div>
 
                     <div className="row g-4">
-                        <div className="col-md-4">
-                            <div className="p-4 shadow-sm bg-white rounded">
+                        <div className="col-md-4 reveal reveal-delay-1">
+                            <div className="feature-card">
+                                <div className="feature-icon">
+                                    <i className="bi bi-mic-fill"></i>
+                                </div>
                                 <h4>Live Speech Detection</h4>
                                 <p>
-                                    Real-time voice recognition tracks your speech and provides
-                                    accurate transcript analysis.
+                                    Real-time voice recognition tracks your speech and
+                                    provides accurate transcript analysis.
                                 </p>
                             </div>
                         </div>
 
-                        <div className="col-md-4">
-                            <div className="p-4 shadow-sm bg-white rounded">
+                        <div className="col-md-4 reveal reveal-delay-2">
+                            <div className="feature-card">
+                                <div className="feature-icon">
+                                    <i className="bi bi-graph-up-arrow"></i>
+                                </div>
                                 <h4>Performance Analytics</h4>
                                 <p>
-                                    Get detailed insights on pacing, filler words, and overall
-                                    speaking confidence.
+                                    Get detailed insights on pacing, filler words, and
+                                    overall speaking confidence.
                                 </p>
                             </div>
                         </div>
 
-                        <div className="col-md-4">
-                            <div className="p-4 shadow-sm bg-white rounded">
+                        <div className="col-md-4 reveal reveal-delay-3">
+                            <div className="feature-card">
+                                <div className="feature-icon">
+                                    <i className="bi bi-lightbulb-fill"></i>
+                                </div>
                                 <h4>Smart Feedback</h4>
                                 <p>
                                     Receive personalized improvement tips to level up your
@@ -86,28 +165,28 @@ function Home() {
                 </div>
             </section>
 
-            {/* SCRIPT INPUT SECTION */}
-            <section id="start-section" className="py-5 text-center">
+            <section id="start-section" className="practice-section">
                 <div className="container">
-                    <h2  className="text-secondary">Start Your Practice Session</h2>
-                    <p className="mb-4 text-secondary">
-                        Paste your speech script below and begin your training session.
-                    </p>
+                    <div className="practice-card reveal">
+                        <div className="section-heading left">
+                            <span className="section-tag">Start Your Session</span>
+                            <h2>Practice with your script</h2>
+                            <p>
+                                Paste your speech below and begin your guided training
+                                session.
+                            </p>
+                        </div>
 
-                    <div className="row justify-content-center">
-                        <div className="col-md-8">
-                            <textarea
-                                rows="8"
-                                className="form-control mb-3 bg-secondary text-white"
-                                placeholder="Paste your speech here..."
-                                value={script}
-                                onChange={(e) => setScript(e.target.value)} 
-                            />
+                        <textarea
+                            rows="9"
+                            className="script-input"
+                            placeholder="Paste your speech here..."
+                            value={script}
+                            onChange={(e) => setScript(e.target.value)}
+                        />
 
-                            <button
-                                onClick={startSession}
-                                className="btn btn-dark btn-lg fw-bold"
-                            >
+                        <div className="practice-actions">
+                            <button onClick={startSession} className="primary-btn">
                                 Start Session
                             </button>
                         </div>
