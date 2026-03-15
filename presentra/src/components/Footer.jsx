@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import "../styles/Footer.css";
+import presentraLogo from "../assets/presentra.png";
 
 function Footer() {
     return (
@@ -10,6 +11,7 @@ function Footer() {
 
                     {/* Brand */}
                     <div className="col-md-4 footer-brand">
+                        <img src={presentraLogo} alt="Presentra Logo" style={{width: "40px", marginBottom: "10px"}} />
                         <h3 className="footer-logo">Presentra</h3>
                         <p>
                             Presentra is an AI-powered public speaking assistant
