@@ -34,6 +34,14 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         leftHand: { x: null, y: null, orientation: null, fingerSpread: null },
         rightHand: { x: null, y: null, orientation: null, fingerSpread: null }
     });
+    
+    // Gesture state for landmark smoothing (reduce bouncy detection)
+    const gestureStateRef = useRef({
+        // Mouth smoothing values (for reducing bouncy landmarks)
+        mouthOpenness: null,
+        mouthWidth: null,
+        mouthCornerRise: null,
+    });
 
     // Comprehensive facial reference points based on MediaPipe standards
     const FACIAL_REFERENCE_POINTS = {
@@ -41,13 +49,13 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         mouth: {
             // Corners (61, 291), top (13), bottom (14)
             // For smile: corners rise, mouth opens slightly
-            smileCornerRise: 0.015, // Corners should be above center by this amount
-            smileMouthOpen: { min: 0.02, max: 0.08 }, // Mouth openness range
-            smileMouthWidth: 0.15, // Minimum mouth width for smile
+            smileCornerRise: 0.008, // LOWERED from 0.015 - detect subtle smiles
+            smileMouthOpen: { min: 0.01, max: 0.12 }, // WIDENED from 0.02-0.08 - detect more natural smiles
+            smileMouthWidth: 0.10, // LOWERED from 0.15 - detect smaller smiles
             
             // For frown: corners drop, mouth slightly open
-            frownCornerDrop: -0.015, // Corners should be below center
-            frownMouthOpen: { min: 0.01, max: 0.06 },
+            frownCornerDrop: -0.008, // LOWERED from -0.015 - detect subtle frowns
+            frownMouthOpen: { min: 0.005, max: 0.10 }, // WIDENED from 0.01-0.06
             
             // For neutral: closed mouth, no corner movement
             neutralMouthOpen: { max: 0.02 },
@@ -57,8 +65,8 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         eyebrows: {
             // Inner points (105 left, 334 right), outer points (107 left, 336 right)
             // For angry/mad: eyebrows down, angled inward
-            madAngleRange: { min: -70, max: 0 }, // Downward slant
-            madDistance: 0.2, // Inner points close together
+            madAngleRange: { min: -60, max: 10 }, // WIDENED from -70 to 0 - easier to detect
+            madDistance: 0.25, // RELAXED from 0.2 - allow slightly more distance
             madEyebrowDrop: 0.02, // Drop below reference height
             
             // For normal: eyebrows relatively straight
@@ -71,15 +79,15 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
             // Iris centers (468 left, 473 right)
             // For eye contact: both irises centered horizontally in face
             eyeContactCenterX: 0.5, // Face center
-            eyeContactThreshold: 0.2, // ±20% tolerance
+            eyeContactThreshold: 0.08, // ±8% tolerance (STRICTER - was 0.2)
             
             // Eye width landmarks (33, 362 outer; 133, 263 inner)
             eyeOpenness: { min: 0.08, max: 0.4 }, // Eye height range
-            eyeSymmetry: 0.1, // Max difference between left and right
+            eyeSymmetry: 0.05, // Max difference between left and right (STRICTER - was 0.1)
             
             // For looking left/right, eyes move horizontally
-            eyeLookLeftThreshold: 0.35, // Left iris X position
-            eyeLookRightThreshold: 0.65, // Right iris X position
+            eyeLookLeftThreshold: 0.40, // Left iris X position (ADJUSTED from 0.35)
+            eyeLookRightThreshold: 0.60, // Right iris X position (ADJUSTED from 0.65)
         }
     };
 
@@ -179,27 +187,46 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         const rightCornerRise = centerMouthY - mouthRight.y;
         const avgCornerRise = (leftCornerRise + rightCornerRise) / 2;
 
-        // Compare against reference points
+        // Apply exponential smoothing to reduce bouncy landmarks
+        // Store smoothed values in gestureStateRef for persistence across frames
+        let smoothedOpenness = mouthOpenness;
+        let smoothedWidth = mouthWidth;
+        let smoothedRise = avgCornerRise;
+        
+        const alpha = 0.3; // 30% new value, 70% old smoothed value (stable)
+        
+        if (gestureStateRef.current.mouthOpenness !== null) {
+            smoothedOpenness = alpha * mouthOpenness + (1 - alpha) * gestureStateRef.current.mouthOpenness;
+            smoothedWidth = alpha * mouthWidth + (1 - alpha) * gestureStateRef.current.mouthWidth;
+            smoothedRise = alpha * avgCornerRise + (1 - alpha) * gestureStateRef.current.mouthCornerRise;
+        }
+        
+        // Store smoothed values for next frame
+        gestureStateRef.current.mouthOpenness = smoothedOpenness;
+        gestureStateRef.current.mouthWidth = smoothedWidth;
+        gestureStateRef.current.mouthCornerRise = smoothedRise;
+
+        // Compare against reference points using SMOOTHED values
         const refs = FACIAL_REFERENCE_POINTS.mouth;
 
-        // SMILE detection
-        if (mouthOpenness >= refs.smileMouthOpen.min &&
-            mouthOpenness <= refs.smileMouthOpen.max &&
-            mouthWidth >= refs.smileMouthWidth &&
-            avgCornerRise > refs.smileCornerRise) {
-            console.log("✓ SMILE:", { mouthOpenness: mouthOpenness.toFixed(3), mouthWidth: mouthWidth.toFixed(3), cornerRise: avgCornerRise.toFixed(3) });
+        // SMILE detection - using smoothed values reduces flicker
+        if (smoothedOpenness >= refs.smileMouthOpen.min &&
+            smoothedOpenness <= refs.smileMouthOpen.max &&
+            smoothedWidth >= refs.smileMouthWidth &&
+            smoothedRise > refs.smileCornerRise) {
+            console.log("✓ SMILE (smoothed):", { openness: smoothedOpenness.toFixed(3), width: smoothedWidth.toFixed(3), rise: smoothedRise.toFixed(3) });
             return "smile";
         }
 
-        // FROWN detection
-        if (mouthOpenness >= refs.frownMouthOpen.min &&
-            mouthOpenness <= refs.frownMouthOpen.max &&
-            avgCornerRise < refs.frownCornerDrop) {
-            console.log("✓ FROWN:", { mouthOpenness: mouthOpenness.toFixed(3), cornerDrop: avgCornerRise.toFixed(3) });
+        // FROWN detection - using smoothed values
+        if (smoothedOpenness >= refs.frownMouthOpen.min &&
+            smoothedOpenness <= refs.frownMouthOpen.max &&
+            smoothedRise < refs.frownCornerDrop) {
+            console.log("✓ FROWN (smoothed):", { openness: smoothedOpenness.toFixed(3), drop: smoothedRise.toFixed(3) });
             return "frown";
         }
 
-        console.log("Mouth metrics:", { mouthOpenness: mouthOpenness.toFixed(3), mouthWidth: mouthWidth.toFixed(3), cornerRise: avgCornerRise.toFixed(3) });
+        console.log("Mouth metrics (smoothed):", { openness: smoothedOpenness.toFixed(3), width: smoothedWidth.toFixed(3), rise: smoothedRise.toFixed(3) });
         return "neutral";
     };
 
@@ -287,6 +314,8 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
             lastHandPos.y = wrist.y;
             lastHandPos.fingerSpread = null;
             lastHandPos.palmAngle = null;
+            lastHandPos.smoothedFingerSpread = null;
+            lastHandPos.closeHandFrameCounter = 0;
             return null;
         }
 
@@ -309,23 +338,47 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         if (thumb && pinky && thumb.visibility > 0.3 && pinky.visibility > 0.3) {
             const fingerSpread = Math.abs(thumb.x - pinky.x);
             
-            // Store current finger spread for reference
+            // Apply exponential moving average smoothing to stabilize bouncy landmarks
+            // alpha = 0.4 means: 40% new value, 60% old value (more stable, less bouncy)
+            let smoothedSpread = fingerSpread;
+            if (lastHandPos.smoothedFingerSpread !== null) {
+                smoothedSpread = 0.4 * fingerSpread + 0.6 * lastHandPos.smoothedFingerSpread;
+            }
+            lastHandPos.smoothedFingerSpread = smoothedSpread;
+            
+            // Store both raw and smoothed for debugging
             lastHandPos.currentFingerSpread = fingerSpread;
+            lastHandPos.debugSmoothedSpread = smoothedSpread;
 
             // Initialize finger spread on first detection
             if (lastHandPos.fingerSpread === null) {
                 lastHandPos.fingerSpread = fingerSpread;
+                lastHandPos.smoothedFingerSpread = fingerSpread;
+                lastHandPos.closeHandFrameCounter = 0;
             } else {
-                // Check against reference points
-                // Open Hand: fingers spread > 0.25 units apart
-                if (fingerSpread >= HAND_GESTURE_REFERENCES.openHand.fingerSpreadMin) {
+                // Check against reference points using SMOOTHED values
+                // Open Hand: smoothed spread >= 0.35 units
+                if (smoothedSpread >= HAND_GESTURE_REFERENCES.openHand.fingerSpreadMin) {
                     movement = "openHand";
-                    lastHandPos.fingerSpread = fingerSpread;
+                    lastHandPos.fingerSpread = smoothedSpread;
+                    lastHandPos.closeHandFrameCounter = 0; // Reset closed hand counter
+                    console.log(`✋ OPEN HAND - Smoothed: ${smoothedSpread.toFixed(3)}, Raw: ${fingerSpread.toFixed(3)}`);
                 }
-                // Close Hand: fingers close together < 0.08 units apart
-                else if (fingerSpread <= HAND_GESTURE_REFERENCES.closeHand.fingerSpreadMax) {
-                    movement = "closeHand";
-                    lastHandPos.fingerSpread = fingerSpread;
+                // Close Hand: smoothed spread <= 0.05 units
+                // Require 3 consecutive frames of low spread to confirm closed hand (prevents bouncing)
+                else if (smoothedSpread <= 0.05) {
+                    lastHandPos.closeHandFrameCounter += 1;
+                    
+                    // Only count as closed hand after 3 stable frames
+                    if (lastHandPos.closeHandFrameCounter >= 3) {
+                        movement = "closeHand";
+                        lastHandPos.fingerSpread = smoothedSpread;
+                        console.log(`✋ CLOSED HAND DETECTED - Smoothed: ${smoothedSpread.toFixed(3)}, Raw: ${fingerSpread.toFixed(3)}, Frames: ${lastHandPos.closeHandFrameCounter}`);
+                    }
+                }
+                // Reset counter if spreading beyond 0.08 threshold
+                else if (smoothedSpread > 0.08) {
+                    lastHandPos.closeHandFrameCounter = 0;
                 }
             }
         }
@@ -421,46 +474,58 @@ const HandTracker = ({ onTrackingUpdate, onCleanup }) => {
         }
     }, [onCleanup]);
 
-    // Cleanup on unmount
+    // Cleanup on unmount - CRITICAL: This runs when user leaves the page
     useEffect(() => {
+        // Capture refs at mount time to avoid stale references
         const camera = cameraRef.current;
         const holistic = holisticRef.current;
         const webcam = webcamRef.current;
 
         return () => {
-            console.log("Cleaning up camera and holistic on unmount...");
+            console.log("🛑 CLEANUP TRIGGERED: User left the page - Stopping all tracking...");
             
-            // IMPORTANT: Stop webcam tracks FIRST
-            if (webcam?.video?.srcObject) {
-                try {
-                    const tracks = webcam.video.srcObject.getTracks();
-                    tracks.forEach(track => {
-                        track.stop();
-                        console.log("Webcam track stopped");
-                    });
-                } catch (err) {
-                    console.error("Error stopping webcam tracks:", err);
+            // STOP EVERYTHING IMMEDIATELY
+            try {
+                // Stop webcam tracks FIRST
+                if (webcam?.video?.srcObject) {
+                    try {
+                        const tracks = webcam.video.srcObject.getTracks();
+                        tracks.forEach(track => {
+                            track.stop();
+                            console.log("✅ Webcam track stopped");
+                        });
+                    } catch (err) {
+                        console.error("❌ Error stopping webcam tracks:", err);
+                    }
                 }
-            }
 
-            // Stop camera BEFORE closing holistic
-            if (camera) {
-                try {
-                    camera.stop?.();
-                    console.log("Camera stopped");
-                } catch (err) {
-                    console.error("Error stopping camera:", err);
+                // Stop camera
+                if (camera) {
+                    try {
+                        camera.stop?.();
+                        console.log("✅ Camera stopped");
+                    } catch (err) {
+                        console.error("❌ Error stopping camera:", err);
+                    }
                 }
-            }
 
-            // THEN close holistic (after camera has stopped)
-            if (holistic) {
-                try {
-                    holistic.close?.();
-                    console.log("Holistic closed");
-                } catch (err) {
-                    console.error("Error closing holistic:", err);
+                // Close holistic
+                if (holistic) {
+                    try {
+                        holistic.close?.();
+                        console.log("✅ Holistic closed");
+                    } catch (err) {
+                        console.error("❌ Error closing holistic:", err);
+                    }
                 }
+                
+                // Force nullify refs
+                cameraRef.current = null;
+                holisticRef.current = null;
+                
+                console.log("✅ CLEANUP COMPLETE - All resources released");
+            } catch (err) {
+                console.error("❌ Critical error during cleanup:", err);
             }
         };
     }, []);
@@ -950,6 +1015,8 @@ function Session() {
     const [liveVolume, setLiveVolume] = useState(0);
     const [volumeLabel, setVolumeLabel] = useState("");
 
+    // Hand gesture tracking
+    const [handMovementsCount, setHandMovementsCount] = useState(0);
 
     const [isScriptVisible, setIsScriptVisible] = useState(true);
 
@@ -977,6 +1044,12 @@ function Session() {
     const volumeRafRef = useRef(null);
     const volumeHistoryRef = useRef([]);
     const hideScriptTimeoutRef = useRef(null);
+
+    // Gesture tracking refs to prevent duplicate counting
+    const lastLeftMovementRef = useRef(null);
+    const lastRightMovementRef = useRef(null);
+    const leftMovementFrameCountRef = useRef(0);
+    const rightMovementFrameCountRef = useRef(0);
 
     useEffect(() => {
         timerValueRef.current = timer;
@@ -1134,6 +1207,53 @@ function Session() {
         analyserRef.current = null;
     };
 
+    // Handle tracking updates from HandTracker component
+    const handleTrackingUpdate = (trackingData) => {
+        const { leftHandMovement, rightHandMovement } = trackingData;
+
+        // Process LEFT HAND movement with debouncing (require 2 consecutive frames)
+        if (leftHandMovement && leftHandMovement !== lastLeftMovementRef.current) {
+            leftMovementFrameCountRef.current += 1;
+            console.log(`🟢 LEFT GESTURE: ${leftHandMovement} (frame ${leftMovementFrameCountRef.current})`);
+
+            if (leftMovementFrameCountRef.current >= 2) {
+                // Gesture confirmed - increment counter
+                setHandMovementsCount(prev => {
+                    const newCount = prev + 1;
+                    console.log(`✅ LEFT GESTURE COUNTED: Total = ${newCount}`);
+                    return newCount;
+                });
+                lastLeftMovementRef.current = leftHandMovement;
+                leftMovementFrameCountRef.current = 0; // Reset counter
+            }
+        } else if (!leftHandMovement) {
+            // Reset frame counter when no movement
+            leftMovementFrameCountRef.current = 0;
+            lastLeftMovementRef.current = null;
+        }
+
+        // Process RIGHT HAND movement with debouncing (require 2 consecutive frames)
+        if (rightHandMovement && rightHandMovement !== lastRightMovementRef.current) {
+            rightMovementFrameCountRef.current += 1;
+            console.log(`🔵 RIGHT GESTURE: ${rightHandMovement} (frame ${rightMovementFrameCountRef.current})`);
+
+            if (rightMovementFrameCountRef.current >= 2) {
+                // Gesture confirmed - increment counter
+                setHandMovementsCount(prev => {
+                    const newCount = prev + 1;
+                    console.log(`✅ RIGHT GESTURE COUNTED: Total = ${newCount}`);
+                    return newCount;
+                });
+                lastRightMovementRef.current = rightHandMovement;
+                rightMovementFrameCountRef.current = 0; // Reset counter
+            }
+        } else if (!rightHandMovement) {
+            // Reset frame counter when no movement
+            rightMovementFrameCountRef.current = 0;
+            lastRightMovementRef.current = null;
+        }
+    };
+
     const startSession = async () => {
         if (!script?.trim()) {
             alert("No script provided.");
@@ -1153,6 +1273,7 @@ function Session() {
         setWordCount(0);
         setLiveVolume(0);
         setVolumeLabel("");
+        setHandMovementsCount(0); // Reset hand movement counter
         setIsScriptVisible(true);
 
         clearTimeout(hideScriptTimeoutRef.current);
@@ -1165,6 +1286,12 @@ function Session() {
         lastAnalysisTimeRef.current = Date.now();
         lastWordCountRef.current = 0;
         startTimeRef.current = Date.now();
+
+        // Reset gesture tracking
+        lastLeftMovementRef.current = null;
+        lastRightMovementRef.current = null;
+        leftMovementFrameCountRef.current = 0;
+        rightMovementFrameCountRef.current = 0;
 
         if (scrollRef.current) {
             scrollRef.current.scrollTop = 0;
@@ -1197,6 +1324,7 @@ function Session() {
 
         recognition.onstart = () => {
             sessionBaseTranscript = transcriptRef.current;
+            console.log("🎤 Speech Recognition STARTED - Listening now");
         };
 
         recognition.onresult = (event) => {
@@ -1335,8 +1463,17 @@ function Session() {
             console.error("Speech recognition error:", event.error);
         };
 
+        // START RECOGNITION IMMEDIATELY - NO DELAY
+        console.log("🎤 Starting speech recognition immediately...");
         recognition.start();
         recognitionRef.current = recognition;
+        
+        // Ensure it starts right away by checking after short delay
+        setTimeout(() => {
+            if (recognitionRef.current) {
+                console.log("✅ Speech recognition confirmed active");
+            }
+        }, 100);
 
         timerRef.current = setInterval(() => {
             setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
@@ -1489,6 +1626,7 @@ function Session() {
         );
 
         results.summary.averageWPM = averageWPMRef.current;
+        results.summary.handMovementsCount = handMovementsCount; // Add hand movements to results
 
         navigate("/dashboard", { state: results });
     };
@@ -1697,6 +1835,14 @@ function Session() {
                                 </div>
                                 <small className="metric-sub">{liveVolume}/100</small>
                             </div>
+
+                            <div className="metric-card">
+                                <span className="metric-label">
+                                    <i className="bi bi-hand-thumbs-up"></i> Hand Movements
+                                </span>
+                                <strong className="metric-value">{handMovementsCount}</strong>
+                                <small className="metric-sub">Gestures detected</small>
+                            </div>
                         </div>
                     </section>
 
@@ -1754,7 +1900,10 @@ function Session() {
                                 Webcam Feed
                             </h5>
                         </div>
-                        <HandTracker onCleanup={(cleanup) => { cameraCleanupRef.current = cleanup; }} />
+                        <HandTracker 
+                            onTrackingUpdate={handleTrackingUpdate}
+                            onCleanup={(cleanup) => { cameraCleanupRef.current = cleanup; }} 
+                        />
                     </section>
 
                     <section className="session-panel transcript-panel reveal-session reveal-delay-2">
