@@ -1302,14 +1302,6 @@ function Session() {
 
             scrollRef.current.scrollTop += speed;
 
-            if (
-                scrollRef.current.scrollTop + scrollRef.current.clientHeight >=
-                scrollRef.current.scrollHeight
-            ) {
-                stopSession();
-                return;
-            }
-
             animationRef.current = requestAnimationFrame(scroll);
         };
 
