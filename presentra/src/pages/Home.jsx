@@ -62,7 +62,7 @@ function Home() {
                 <div className="hero-overlay" />
 
                 <div className="container hero-content reveal revealed">
-                    <span className="hero-badge">AI-Powered Public Speaking Coach</span>
+                    <span className="hero-badge">Public Speaking Coach</span>
                     
                     <br/>
 
@@ -84,7 +84,7 @@ function Home() {
                     </h2>
 
                     <p className="hero-description">
-                        Presentra is an AI-powered public speaking training platform
+                        Presentra is a public speaking training platform
                         designed to help students improve confidence, clarity, and pacing
                         through real-time speech analysis and smart performance feedback.
                     </p>
